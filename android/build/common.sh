@@ -65,7 +65,7 @@ case "$CPU" in
     ;;
     amd64) CPU=x86_64
     ;;
-    powerpc) CPU=ppc
+    powerpc|ppc64) CPU=ppc
     ;;
 esac
 
