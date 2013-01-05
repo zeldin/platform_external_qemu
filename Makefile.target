@@ -133,6 +133,8 @@ HW_OBJ_SOURCES := \
 
 HW_OBJ_CFLAGS  := $(EMULATOR_TARGET_CFLAGS)
 
+common_LOCAL_SRC_FILES += i386-dis.c
+
 endif
 
 ifeq ($(EMULATOR_TARGET_ARCH),mips)
