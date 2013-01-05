@@ -2,7 +2,7 @@
 #include "android/config/config.h"
 #define TARGET_I386 1
 /* For now, KVM is only supported on Linux hosts */
-#ifdef CONFIG_LINUX
+#if defined(CONFIG_LINUX) && (defined(__i386__) || defined(__x86_64__))
 #define CONFIG_KVM  1
 #endif
 
