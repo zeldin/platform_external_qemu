@@ -50,12 +50,12 @@ int android_verbose;
 #  define DLL_EXTENSION  ".so"
 #endif
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__powerpc64__)
 /* Normally emulator is compiled in 32-bit.  In standalone it can be compiled
    in 64-bit (with ,/android-configure.sh --try-64).  In this case, emulator-$ARCH
    are also compiled in 64-bit and will search for lib64*.so instead of lib*so */
 #define  GLES_EMULATION_LIB  "lib64OpenglRender" DLL_EXTENSION
-#elif defined(__i386__)
+#elif defined(__i386__) || defined(__powerpc__)
 #define  GLES_EMULATION_LIB  "libOpenglRender" DLL_EXTENSION
 #else
 #error Unknown architecture for codegen
