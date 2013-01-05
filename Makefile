@@ -57,19 +57,19 @@ all: libraries executables
 EXECUTABLES :=
 LIBRARIES   :=
 
-ifneq ($(SDL_CONFIG),)
-SDL_LIBS   := $(filter %.a,$(shell $(SDL_CONFIG) --static-libs))
-$(foreach lib,$(SDL_LIBS), \
-    $(eval $(call copy-prebuilt-lib,$(lib))) \
-)
-endif
-
 clean: clean-intermediates
 
 distclean: clean clean-config
 
 # let's roll
 include Makefile.android
+
+ifneq ($(SDL_CONFIG),)
+SDL_LIBS   := $(filter %.a,$(shell $(SDL_CONFIG) --static-libs))
+$(foreach lib,$(SDL_LIBS), \
+    $(eval $(call copy-prebuilt-lib,$(lib))) \
+)
+endif
 
 libraries: $(LIBRARIES)
 executables: $(EXECUTABLES)
