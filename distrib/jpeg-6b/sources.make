@@ -19,7 +19,9 @@ LIBJPEG_SOURCES += jmem-android.c
 
 LIBJPEG_CFLAGS += -DAVOID_TABLES
 LIBJPEG_CFLAGS += -O3 -fstrict-aliasing
+ifeq ($(HOST_ARCH),x86)
 LIBJPEG_CFLAGS += -DANDROID_INTELSSE2_IDCT -msse2
+endif
 #LIBJPEG_CFLAGS += -march=armv6j
 
 # enable tile based decode
