@@ -941,6 +941,13 @@ int ApiGen::genDecoderImpl(const std::string &filename)
                                 var_name,
                                 varoffset.c_str(),
                                 var_name);
+#ifdef __BIG_ENDIAN__
+			fprintf(fp,
+				"\t\t\tswap_array((%s)(void*)(inptr_%s.get()), size_%s);\n",
+				v->type()->name().c_str(),
+				var_name,
+				var_name);
+#endif			
                     }
                     if (pass == PASS_FunctionCall) {
                         if (v->nullAllowed()) {
@@ -967,6 +974,13 @@ int ApiGen::genDecoderImpl(const std::string &filename)
                                 "unsigned char *inptr_%s = (ptr + %s + 4);\n",
                                 var_name,
                                 varoffset.c_str());
+#ifdef __BIG_ENDIAN__
+			fprintf(fp,
+				"\t\t\tswap_array((%s)(inptr_%s), size_%s);\n",
+				v->type()->name().c_str(),
+				var_name);
+				var_name);
+#endif
                     }
                     if (pass == PASS_FunctionCall) {
                         if (v->nullAllowed()) {
@@ -1034,6 +1048,13 @@ int ApiGen::genDecoderImpl(const std::string &filename)
                                 var_name);
                     }
                     if (pass == PASS_FlushOutput) {
+#ifdef __BIG_ENDIAN__
+			fprintf(fp,
+				"\t\t\tswap_array((%s)(void*)(outptr_%s.get()), size_%s);\n",
+				v->type()->name().c_str(),
+				var_name,
+				var_name);
+#endif
                         fprintf(fp,
                                 "\t\t\toutptr_%s.flush();\n",
                                 var_name);
@@ -1067,6 +1088,15 @@ int ApiGen::genDecoderImpl(const std::string &filename)
                                 var_name,
                                 varoffset.c_str());
                     }
+#ifdef __BIG_ENDIAN__
+                    if (pass == PASS_FlushOutput) {
+			fprintf(fp,
+				"\t\t\tswap_array((%s)(outptr_%s), size_%s);\n",
+				v->type()->name().c_str(),
+				var_name);
+				var_name);
+		    }
+#endif
 #endif  // !USE_ALIGNED_BUFFERS
                     varoffset += " + 4";
                 }

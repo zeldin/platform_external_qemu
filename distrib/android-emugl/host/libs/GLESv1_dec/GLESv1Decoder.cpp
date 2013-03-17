@@ -137,7 +137,7 @@ void GLESv1Decoder::s_glMatrixIndexPointerOffset(void * self, GLint size, GLenum
 
 #define STORE_POINTER_DATA_OR_ABORT(location)    \
     if (ctx->m_contextData != NULL) {   \
-        ctx->m_contextData->storePointerData((location), data, datalen); \
+        ctx->m_contextData->storePointerData((location), data, datalen, type); \
     } else { \
         return; \
     }

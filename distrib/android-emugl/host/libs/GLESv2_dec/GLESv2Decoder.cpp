@@ -108,7 +108,7 @@ void GLESv2Decoder::s_glVertexAttribPointerData(void *self, GLuint indx, GLint s
 {
     GLESv2Decoder *ctx = (GLESv2Decoder *) self;
     if (ctx->m_contextData != NULL) {
-        ctx->m_contextData->storePointerData(indx, data, datalen);
+        ctx->m_contextData->storePointerData(indx, data, datalen, type);
         // note - the stride of the data is always zero when it comes out of the codec.
         // See gl2.attrib for the packing function call.
         ctx->glVertexAttribPointer(indx, size, type, normalized, 0, ctx->m_contextData->pointerData(indx));

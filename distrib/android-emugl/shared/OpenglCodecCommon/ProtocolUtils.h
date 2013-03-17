@@ -8,6 +8,61 @@
 
 namespace emugl {
 
+#ifdef __BIG_ENDIAN__
+template<class T> static inline T swap64(const T& n)
+{
+  union { T a; uint64_t b; } v;
+  v.b = __builtin_bswap64(*(uint64_t *)&n);
+  return v.a;
+}
+
+template<class T> static inline T swap32(const T& n)
+{
+  union { T a; uint32_t b; } v;
+  v.b = __builtin_bswap32(*(uint32_t *)&n);
+  return v.a;
+}
+
+template<class T> static inline T swap16(const T& n)
+{
+  union { T a; uint16_t b; } v;
+  v.b = __builtin_bswap16(*(uint16_t *)&n);
+  return v.a;
+}
+
+template<class T> static inline T swap(T n)
+{
+  if(sizeof(T)==8) return swap64(n);
+  else if(sizeof(T)==4) return swap32(n);
+  else if(sizeof(T)==2) return swap16(n);
+  else return n;
+}
+
+template<class T> static inline void swap_in_place(T& n)
+{
+  n = swap(n);
+}
+
+template<class T> static inline void swap_array(T* a, size_t sz)
+{
+  if(sizeof(T)>1 && sz>0) {
+    sz /= sizeof(T);
+    while(sz--) swap_in_place(*a++);
+  }
+}
+
+template<class T> static inline void swap_array(const T* a, size_t sz)
+{
+  swap_array((T*)a, sz);
+}
+
+static inline void swap_array(void *a, size_t sz)
+{}
+
+static inline void swap_array(const void *a, size_t sz)
+{}
+#endif
+
 // Helper macro
 #define COMPILE_ASSERT(cond)  static char kAssert##__LINE__[1 - 2 * !(cond)] __attribute__((unused)) = { 0 }
 
@@ -57,14 +112,22 @@ template <typename T, typename S>
 struct UnpackerT<T,S,false> {
     static inline T unpack(const void* ptr) {
         COMPILE_ASSERT(sizeof(T) == sizeof(S));
+#ifdef __BIG_ENDIAN__
+        return (T)swap(*(S*)(ptr));
+#else
         return (T)(*(S*)(ptr));
+#endif
     }
 };
 
 template <typename T, typename S>
 struct UnpackerT<T,S,true> {
     static inline T unpack(const void* ptr) {
+#ifdef __BIG_ENDIAN__
+        return (T)(uintptr_t)swap(*(S*)(ptr));
+#else
         return (T)(uintptr_t)(*(S*)(ptr));
+#endif
     }
 };
 
@@ -75,7 +138,11 @@ struct UnpackerT<float,uint32_t,false> {
             float f;
             uint32_t u;
         } v;
+#ifdef __BIG_ENDIAN__
+        v.u = swap(*(uint32_t*)(ptr));
+#else
         v.u = *(uint32_t*)(ptr);
+#endif
         return v.f;
     }
 };
@@ -87,7 +154,11 @@ struct UnpackerT<double,uint64_t,false> {
             double d;
             uint32_t u;
         } v;
+#ifdef __BIG_ENDIAN__
+        v.u = swap(*(uint64_t*)(ptr));
+#else
         v.u = *(uint64_t*)(ptr);
+#endif
         return v.d;
     }
 };
@@ -95,7 +166,11 @@ struct UnpackerT<double,uint64_t,false> {
 template <>
 struct UnpackerT<ssize_t,uint32_t,false> {
     static inline ssize_t unpack(const void* ptr) {
+#ifdef __BIG_ENDIAN__
+        return (ssize_t)swap(*(int32_t*)(ptr));
+#else
         return (ssize_t)*(int32_t*)(ptr);
+#endif
     }
 };
 
@@ -119,7 +194,11 @@ class InputBuffer {
 public:
     InputBuffer(const void* input, size_t size, size_t align = 8) :
             mBuff(input), mIsCopy(false) {
+#ifdef __BIG_ENDIAN__
+        { // Always copy so that we can byteswap
+#else
         if (((uintptr_t)input & (align - 1U)) != 0) {
+#endif
             void* newBuff = malloc(size);
             memcpy(newBuff, input, size);
             mBuff = newBuff;
@@ -161,7 +240,11 @@ class OutputBuffer {
 public:
     OutputBuffer(unsigned char* ptr, size_t size, size_t align = 8) :
             mOrgBuff(ptr), mBuff(ptr), mSize(size) {
+#ifdef __BIG_ENDIAN__
+        { // Always copy so that we can byteswap
+#else
         if (((uintptr_t)ptr & (align - 1U)) != 0) {
+#endif
             void* newBuff = calloc(1, size);
             mBuff = newBuff;
         }
