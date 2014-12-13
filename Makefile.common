@@ -530,7 +530,8 @@ ifeq ($(HOST_ARCH),x86_64)
 endif
 ifeq ($(HOST_ARCH),ppc)
     CORE_MISC_SOURCES += disas/ppc.c \
-                         util/cache-utils.c
+                         util/cache-utils.c \
+                         util/getauxval.c
 endif
 
 ifeq ($(HOST_OS),linux)

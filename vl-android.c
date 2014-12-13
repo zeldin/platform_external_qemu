@@ -2127,6 +2127,7 @@ int main(int argc, char **argv, char **envp)
 
     init_clocks();
 
+    qemu_init_auxval(envp);
     qemu_cache_utils_init();
 
     QLIST_INIT (&vm_change_state_head);

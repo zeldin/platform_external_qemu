@@ -88,7 +88,7 @@ extern bool android_op_wipe_data;
  */
 #define  DEFAULT_DEVICE_DPI  165
 
-int qemu_main(int argc, char **argv);
+int qemu_main(int argc, char **argv, char **envp);
 
 /* this function dumps the QEMU help */
 extern void  help( void );
@@ -153,7 +153,7 @@ _adjustPartitionSize( const char*  description,
     return convertMBToBytes(imageMB);
 }
 
-int main(int argc, char **argv)
+int main(int argc, char **argv, char **envp)
 {
     char   tmp[MAX_PATH];
     char*  tmpend = tmp + sizeof(tmp);
@@ -1514,5 +1514,5 @@ int main(int argc, char **argv)
     /* Setup SDL UI just before calling the code */
     init_sdl_ui(skinConfig, skinPath, opts);
 
-    return qemu_main(n, args);
+    return qemu_main(n, args, envp);
 }
