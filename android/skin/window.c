@@ -10,19 +10,20 @@
 ** GNU General Public License for more details.
 */
 #include "android/skin/window.h"
+
+#include "android/skin/charmap.h"
+#include "android/skin/event.h"
 #include "android/skin/image.h"
 #include "android/skin/scaler.h"
-#include "android/charmap.h"
+#include "android/skin/winsys.h"
 #include "android/utils/debug.h"
+#include "android/utils/setenv.h"
 #include "android/utils/system.h"
 #include "android/utils/duff.h"
-#include "android/protocol/core-commands-api.h"
-#include <SDL_syswm.h>
-#include "user-events.h"
-#include <math.h>
 
-#include "android/framebuffer.h"
-#include "android/opengles.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 /* when shrinking, we reduce the pixel ratio by this fixed amount */
 #define  SHRINK_SCALE  0.6
@@ -45,7 +46,10 @@ background_done( Background*  back )
 }
 
 static void
-background_init( Background*  back, SkinBackground*  sback, SkinLocation*  loc, SkinRect*  frame )
+background_init(Background* back,
+                SkinBackground* sback,
+                SkinLocation* loc,
+                SkinRect* frame)
 {
     SkinRect  r;
 
@@ -59,26 +63,22 @@ background_init( Background*  back, SkinBackground*  sback, SkinLocation*  loc, 
 }
 
 static void
-background_redraw( Background*  back, SkinRect*  rect, SDL_Surface*  surface )
+background_redraw(Background* back, SkinRect* rect, SkinSurface* surface)
 {
     SkinRect  r;
 
     if (skin_rect_intersect( &r, rect, &back->rect ) )
     {
-        SDL_Rect  rd, rs;
+        SkinRect src_rect;
+        src_rect.pos.x = r.pos.x - back->origin.x;
+        src_rect.pos.y = r.pos.y - back->origin.y;
+        src_rect.size = r.size;
 
-        rd.x = r.pos.x;
-        rd.y = r.pos.y;
-        rd.w = r.size.w;
-        rd.h = r.size.h;
-
-        rs.x = r.pos.x - back->origin.x;
-        rs.y = r.pos.y - back->origin.y;
-        rs.w = r.size.w;
-        rs.h = r.size.h;
-
-        SDL_BlitSurface( skin_image_surface(back->image), &rs, surface, &rd );
-        //SDL_UpdateRects( surface, 1, &rd );
+        skin_surface_blit(surface,
+                          &r.pos,
+                          skin_image_surface(back->image),
+                          &src_rect,
+                          SKIN_BLIT_SRCOVER);
     }
 }
 
@@ -89,7 +89,7 @@ typedef struct ADisplay {
     SkinRotation   rotation;
     SkinSize       datasize;  /* framebuffer size */
     void*          data;      /* framebuffer pixels */
-    QFrameBuffer*  qfbuff;
+    int            bits_per_pixel;  /* framebuffer depth */
     SkinImage*     onion;       /* onion image */
     SkinRect       onion_rect;  /* onion rect, if any */
     int            brightness;
@@ -99,7 +99,6 @@ static void
 display_done( ADisplay*  disp )
 {
     disp->data   = NULL;
-    disp->qfbuff = NULL;
     skin_image_unref( &disp->onion );
 }
 
@@ -139,8 +138,14 @@ display_init( ADisplay*  disp, SkinDisplay*  sdisp, SkinLocation*  loc, SkinRect
                     disp->rect.size.w, disp->rect.size.h,
                     disp->datasize.w, disp->datasize.h);
 #endif
-    disp->qfbuff = sdisp->qfbuff;
-    disp->data   = sdisp->qfbuff->pixels;
+    disp->data = NULL;
+    disp->bits_per_pixel = 0;
+    if (sdisp->framebuffer_funcs) {
+        disp->data =
+                sdisp->framebuffer_funcs->get_pixels(sdisp->framebuffer);
+        disp->bits_per_pixel =
+                sdisp->framebuffer_funcs->get_depth(sdisp->framebuffer);
+    }
     disp->onion  = NULL;
 
     disp->brightness = LCD_BRIGHTNESS_DEFAULT;
@@ -291,7 +296,10 @@ dotmatrix_dither_argb32( unsigned char*  pixels, int  x, int  y, int  w, int  h,
 #define  LCD_BRIGHTNESS_OFF   LCD_BRIGHTNESS_MIN
 
 static void
-lcd_brightness_argb32( unsigned char*  pixels, SkinRect*  r, int  pitch, int  brightness )
+lcd_brightness_argb32(uint32_t* pixels,
+                      SkinRect* r,
+                      int pitch,
+                      int brightness)
 {
     const unsigned  b_min  = LCD_BRIGHTNESS_MIN;
     const unsigned  b_max  = LCD_BRIGHTNESS_MAX;
@@ -367,14 +375,14 @@ lcd_brightness_argb32( unsigned char*  pixels, SkinRect*  r, int  pitch, int  br
 
 /* this is called when the LCD framebuffer is off */
 static void
-lcd_off_argb32( unsigned char*  pixels, SkinRect*  r, int  pitch )
+lcd_off_argb32(uint32_t* pixels, SkinRect* r, int pitch)
 {
     int  x = r->pos.x;
     int  y = r->pos.y;
     int  w = r->size.w;
     int  h = r->size.h;
 
-    pixels += 4*x + y*pitch;
+    pixels += 4 * x + y*pitch;
     for ( ; h > 0; h-- ) {
         memset( pixels, 0, w*4 );
         pixels += pitch;
@@ -382,7 +390,10 @@ lcd_off_argb32( unsigned char*  pixels, SkinRect*  r, int  pitch )
 }
 
 static void
-display_redraw_rect16( ADisplay* disp, SkinRect* rect, SDL_Surface* surface)
+display_redraw_rect16(ADisplay* disp,
+                      SkinRect* rect,
+                      SkinSurfacePixels* dst,
+                      SkinSurfacePixelFormat* dst_format)
 {
     int           x  = rect->pos.x - disp->rect.pos.x;
     int           y  = rect->pos.y - disp->rect.pos.y;
@@ -390,19 +401,19 @@ display_redraw_rect16( ADisplay* disp, SkinRect* rect, SDL_Surface* surface)
     int           h  = rect->size.h;
     int           disp_w    = disp->rect.size.w;
     int           disp_h    = disp->rect.size.h;
-    int           dst_pitch = surface->pitch;
-    uint8_t*      dst_line  = (uint8_t*)surface->pixels + rect->pos.x*4 + rect->pos.y*dst_pitch;
+    int           dst_pitch = dst->pitch;
+    uint8_t*      dst_line  = (uint8_t*)dst->pixels + rect->pos.x*4 + rect->pos.y*dst_pitch;
     int           src_pitch = disp->datasize.w*2;
     uint8_t*      src_line  = (uint8_t*)disp->data;
     int           yy, xx;
-    uint32_t      rshift = surface->format->Rshift;
-    uint32_t      gshift = surface->format->Gshift;
-    uint32_t      bshift = surface->format->Bshift;
-    uint32_t      amask  = surface->format->Amask; // may be 0x00 for non-alpha format
+    uint32_t      rshift = dst_format->r_shift;
+    uint32_t      gshift = dst_format->g_shift;
+    uint32_t      bshift = dst_format->b_shift;
+    uint32_t      amask  = dst_format->a_mask; // may be 0x00 for non-alpha format
 
     switch ( disp->rotation & 3 )
     {
-    case ANDROID_ROTATION_0:
+    case SKIN_ROTATION_0:
         src_line += x*2 + y*src_pitch;
 
         for (yy = h; yy > 0; yy--)
@@ -420,7 +431,7 @@ display_redraw_rect16( ADisplay* disp, SkinRect* rect, SDL_Surface* surface)
         }
         break;
 
-    case ANDROID_ROTATION_90:
+    case SKIN_ROTATION_90:
         src_line += y*2 + (disp_w - x - 1)*src_pitch;
 
         for (yy = h; yy > 0; yy--)
@@ -438,7 +449,7 @@ display_redraw_rect16( ADisplay* disp, SkinRect* rect, SDL_Surface* surface)
         }
         break;
 
-    case ANDROID_ROTATION_180:
+    case SKIN_ROTATION_180:
         src_line += (disp_w -1 - x)*2 + (disp_h-1-y)*src_pitch;
 
         for (yy = h; yy > 0; yy--)
@@ -456,7 +467,7 @@ display_redraw_rect16( ADisplay* disp, SkinRect* rect, SDL_Surface* surface)
     }
     break;
 
-    default:  /* ANDROID_ROTATION_270 */
+    default:  /* SKIN_ROTATION_270 */
         src_line += (disp_h-1-y)*2 + x*src_pitch;
 
         for (yy = h; yy > 0; yy--)
@@ -476,7 +487,10 @@ display_redraw_rect16( ADisplay* disp, SkinRect* rect, SDL_Surface* surface)
 }
 
 static void
-display_redraw_rect32( ADisplay* disp, SkinRect* rect,SDL_Surface* surface)
+display_redraw_rect32(ADisplay* disp,
+                      SkinRect* rect,
+                      SkinSurfacePixels* dst,
+                      SkinSurfacePixelFormat* dst_format)
 {
     int           x  = rect->pos.x - disp->rect.pos.x;
     int           y  = rect->pos.y - disp->rect.pos.y;
@@ -484,19 +498,19 @@ display_redraw_rect32( ADisplay* disp, SkinRect* rect,SDL_Surface* surface)
     int           h  = rect->size.h;
     int           disp_w    = disp->rect.size.w;
     int           disp_h    = disp->rect.size.h;
-    int           dst_pitch = surface->pitch;
-    uint8_t*      dst_line  = (uint8_t*)surface->pixels + rect->pos.x*4 + rect->pos.y*dst_pitch;
+    int           dst_pitch = dst->pitch;
+    uint8_t*      dst_line  = (uint8_t*)dst->pixels + rect->pos.x*4 + rect->pos.y*dst_pitch;
     int           src_pitch = disp->datasize.w*4;
     uint8_t*      src_line  = (uint8_t*)disp->data;
     int           yy;
-    uint32_t      rshift = surface->format->Rshift;
-    uint32_t      gshift = surface->format->Gshift;
-    uint32_t      bshift = surface->format->Bshift;
-    uint32_t      amask  = surface->format->Amask; // may be 0x00 for non-alpha format
+    uint32_t      rshift = dst_format->r_shift;
+    uint32_t      gshift = dst_format->g_shift;
+    uint32_t      bshift = dst_format->b_shift;
+    uint32_t      amask  = dst_format->a_mask; // may be 0x00 for non-alpha format
 
     switch ( disp->rotation & 3 )
     {
-    case ANDROID_ROTATION_0:
+    case SKIN_ROTATION_0:
         src_line += x*4 + y*src_pitch;
 
         for (yy = h; yy > 0; yy--) {
@@ -513,7 +527,7 @@ display_redraw_rect32( ADisplay* disp, SkinRect* rect,SDL_Surface* surface)
         }
         break;
 
-    case ANDROID_ROTATION_90:
+    case SKIN_ROTATION_90:
         src_line += y*4 + (disp_w - x - 1)*src_pitch;
 
         for (yy = h; yy > 0; yy--)
@@ -531,7 +545,7 @@ display_redraw_rect32( ADisplay* disp, SkinRect* rect,SDL_Surface* surface)
         }
         break;
 
-    case ANDROID_ROTATION_180:
+    case SKIN_ROTATION_180:
         src_line += (disp_w -1 - x)*4 + (disp_h-1-y)*src_pitch;
 
         for (yy = h; yy > 0; yy--)
@@ -549,7 +563,7 @@ display_redraw_rect32( ADisplay* disp, SkinRect* rect,SDL_Surface* surface)
     }
     break;
 
-    default:  /* ANDROID_ROTATION_270 */
+    default:  /* SKIN_ROTATION_270 */
         src_line += (disp_h-1-y)*4 + x*src_pitch;
 
         for (yy = h; yy > 0; yy--)
@@ -569,7 +583,7 @@ display_redraw_rect32( ADisplay* disp, SkinRect* rect,SDL_Surface* surface)
 }
 
 static void
-display_redraw( ADisplay*  disp, SkinRect*  rect, SDL_Surface*  surface )
+display_redraw(ADisplay*  disp, SkinRect*  rect, SkinSurface* surface)
 {
     SkinRect  r;
 
@@ -583,48 +597,58 @@ display_redraw( ADisplay*  disp, SkinRect*  rect, SDL_Surface*  surface )
                         disp->rect.size.w, disp->rect.size.h, disp->datasize.w, disp->datasize.h,
                         rect->pos.x, rect->pos.y, rect->size.w, rect->size.h );
 #endif
-        SDL_LockSurface( surface );
+        SkinSurfacePixelFormat format;
+        skin_surface_get_format(surface, &format);
+
+        SkinSurfacePixels pix;
+        skin_surface_lock(surface, &pix);
 
         if (disp->brightness == LCD_BRIGHTNESS_OFF)
         {
-            lcd_off_argb32( surface->pixels, &r, surface->pitch );
+            lcd_off_argb32(pix.pixels, &r, pix.pitch);
         }
         else
         {
-            if (disp->qfbuff->bits_per_pixel == 32)
-                display_redraw_rect32(disp, &r, surface);
-            else
-                display_redraw_rect16(disp, &r, surface);
+            if (disp->bits_per_pixel == 32) {
+                display_redraw_rect32(disp, &r, &pix, &format);
+            } else {
+                display_redraw_rect16(disp, &r, &pix, &format);
+            }
 #if DOT_MATRIX
-            dotmatrix_dither_argb32( surface->pixels, r.pos.x, r.pos.y, r.size.w, r.size.h, surface->pitch );
+            dotmatrix_dither_argb32(pix.pixels,
+                                    r.pos.x,
+                                    r.pos.y,
+                                    r.size.w,
+                                    r.size.h,
+                                    pix.pitch);
 #endif
             /* apply lightness */
-            lcd_brightness_argb32( surface->pixels, &r, surface->pitch, disp->brightness );
+            lcd_brightness_argb32(pix.pixels,
+                                  &r,
+                                  pix.pitch,
+                                  disp->brightness);
         }
-        SDL_UnlockSurface( surface );
+        skin_surface_unlock(surface);
 
         /* Apply onion skin */
         if (disp->onion != NULL) {
             SkinRect  r2;
 
             if ( skin_rect_intersect( &r2, &r, &disp->onion_rect ) ) {
-                SDL_Rect  rs, rd;
+                SkinRect src_rect;
+                src_rect.pos.x = r2.pos.x - disp->onion_rect.pos.x;
+                src_rect.pos.y = r2.pos.y - disp->onion_rect.pos.y;
+                src_rect.size = r2.size;
 
-                rd.x = r2.pos.x;
-                rd.y = r2.pos.y;
-                rd.w = r2.size.w;
-                rd.h = r2.size.h;
-
-                rs.x = rd.x - disp->onion_rect.pos.x;
-                rs.y = rd.y - disp->onion_rect.pos.y;
-                rs.w = rd.w;
-                rs.h = rd.h;
-
-                SDL_BlitSurface( skin_image_surface(disp->onion), &rs, surface, &rd );
+                skin_surface_blit(surface,
+                                  &r2.pos,
+                                  skin_image_surface(disp->onion),
+                                  &src_rect,
+                                  SKIN_BLIT_SRCOVER);
             }
         }
 
-        SDL_UpdateRect( surface, r.pos.x, r.pos.y, r.size.w, r.size.h );
+        skin_surface_update(surface, &r);
     }
 }
 
@@ -660,7 +684,7 @@ button_init( Button*  button, SkinButton*  sbutton, SkinLocation*  loc, Backgrou
          * this is used as a counter-measure to the fact that the framework always assumes
          * that the physical D-Pad has been rotated when in landscape mode.
          */
-        button->keycode = android_keycode_rotate( button->keycode, -slayout->dpad_rotation );
+        button->keycode = skin_keycode_rotate( button->keycode, -slayout->dpad_rotation );
     }
 
     skin_rect_rotate( &r, &sbutton->rect, loc->rotation );
@@ -671,7 +695,7 @@ button_init( Button*  button, SkinButton*  sbutton, SkinLocation*  loc, Backgrou
 }
 
 static void
-button_redraw( Button*  button, SkinRect*  rect, SDL_Surface*  surface )
+button_redraw(Button* button, SkinRect* rect, SkinSurface* surface)
 {
     SkinRect  r;
 
@@ -679,22 +703,24 @@ button_redraw( Button*  button, SkinRect*  rect, SDL_Surface*  surface )
     {
         if ( button->down && button->image != SKIN_IMAGE_NONE )
         {
-            SDL_Rect  rs, rd;
-
-            rs.x = r.pos.x - button->origin.x;
-            rs.y = r.pos.y - button->origin.y;
-            rs.w = r.size.w;
-            rs.h = r.size.h;
-
-            rd.x = r.pos.x;
-            rd.y = r.pos.y;
-            rd.w = r.size.w;
-            rd.h = r.size.h;
+            SkinRect src_rect;
+            src_rect.pos.x = r.pos.x - button->origin.x;
+            src_rect.pos.y = r.pos.y - button->origin.y;
+            src_rect.size = r.size;
 
             if (button->image != SKIN_IMAGE_NONE) {
-                SDL_BlitSurface( skin_image_surface(button->image), &rs, surface, &rd );
-                if (button->down > 1)
-                    SDL_BlitSurface( skin_image_surface(button->image), &rs, surface, &rd );
+                skin_surface_blit(surface,
+                                  &r.pos,
+                                  skin_image_surface(button->image),
+                                  &src_rect,
+                                  SKIN_BLIT_SRCOVER);
+                if (button->down > 1) {
+                    skin_surface_blit(surface,
+                                      &r.pos,
+                                      skin_image_surface(button->image),
+                                      &src_rect,
+                                      SKIN_BLIT_SRCOVER);
+                }
             }
         }
     }
@@ -748,12 +774,12 @@ ball_state_reset( BallState*  state, SkinWindow*  window )
 }
 
 static void
-ball_state_redraw( BallState*  state, SkinRect*  rect, SDL_Surface*  surface )
+ball_state_redraw(BallState* state, SkinRect* rect, SkinSurface* surface)
 {
     SkinRect  r;
 
     if (skin_rect_intersect( &r, rect, &state->rect ))
-        skin_trackball_draw( state->ball, 0, 0, surface );
+        skin_trackball_draw(state->ball, 0, 0, surface);
 }
 
 static void
@@ -762,16 +788,14 @@ ball_state_show( BallState*  state, int  enable )
     if (enable) {
         if ( !state->tracking ) {
             state->tracking = 1;
-            SDL_ShowCursor(0);
-            SDL_WM_GrabInput( SDL_GRAB_ON );
+            skin_winsys_set_relative_mouse_mode(true);
             skin_trackball_refresh( state->ball );
             skin_window_redraw( state->window, &state->rect );
         }
     } else {
         if ( state->tracking ) {
             state->tracking = 0;
-            SDL_WM_GrabInput( SDL_GRAB_OFF );
-            SDL_ShowCursor(1);
+            skin_winsys_set_relative_mouse_mode(false);
             skin_window_redraw( state->window, &state->rect );
         }
     }
@@ -785,13 +809,7 @@ ball_state_set( BallState*  state, SkinTrackBall*  ball )
 
     state->ball = ball;
     if (ball != NULL) {
-        SDL_Rect  sr;
-
-        skin_trackball_rect( ball, &sr );
-        state->rect.pos.x  = sr.x;
-        state->rect.pos.y  = sr.y;
-        state->rect.size.w = sr.w;
-        state->rect.size.h = sr.h;
+        skin_trackball_rect(ball, &state->rect);
     }
 }
 
@@ -881,7 +899,7 @@ layout_init( Layout*  layout, SkinLayout*  slayout )
 
         SKIN_PART_LOOP_BUTTONS(part, sbutton)
             n_buttons += 1;
-            sbutton=sbutton;
+            (void)sbutton;
         SKIN_PART_LOOP_END
     SKIN_LAYOUT_LOOP_END
 
@@ -936,7 +954,8 @@ Fail:
 }
 
 struct SkinWindow {
-    SDL_Surface*  surface;
+    const SkinWindowFuncs* win_funcs;
+    SkinSurface*  surface;
     Layout        layout;
     SkinPos       pos;
     FingerState   finger;
@@ -961,8 +980,7 @@ struct SkinWindow {
     SkinScaler*   scaler;
     int           shrink;
     double        shrink_scale;
-    unsigned*     shrink_pixels;
-    SDL_Surface*  shrink_surface;
+    SkinSurface*  shrink_surface;
 
     double        effective_scale;
     double        effective_x;
@@ -970,14 +988,14 @@ struct SkinWindow {
 };
 
 static void
-add_finger_event(unsigned x, unsigned y, unsigned state)
+add_finger_event(SkinWindow* window,
+                 unsigned x,
+                 unsigned y,
+                 unsigned state)
 {
     //fprintf(stderr, "::: finger %d,%d %d\n", x, y, state);
 
-    /* NOTE: the 0 is used in hw/goldfish_events.c to differentiate
-     * between a touch-screen and a trackball event
-     */
-    user_event_mouse(x, y, 0, state);
+    window->win_funcs->mouse_event(x, y, state);
 }
 
 static void
@@ -1120,7 +1138,7 @@ skin_window_move_mouse( SkinWindow*  window,
 static void
 skin_window_trackball_press( SkinWindow*  window, int  down )
 {
-    user_event_key( BTN_MOUSE, down );
+    window->win_funcs->key_event(BTN_MOUSE, down);
 }
 
 static void
@@ -1156,7 +1174,8 @@ skin_window_show_trackball( SkinWindow*  window, int  enable )
 static void
 skin_window_hide_opengles( SkinWindow* window )
 {
-    android_hideOpenglesWindow();
+    window->win_funcs->opengles_hide();
+    //android_hideOpenglesWindow();
 }
 
 /* Show the OpenGL ES framebuffer window */
@@ -1164,37 +1183,37 @@ static void
 skin_window_show_opengles( SkinWindow* window )
 {
     {
-        SDL_SysWMinfo  wminfo;
-        void*          winhandle;
-        ADisplay*      disp = window->layout.displays;
-        SkinRect       drect = disp->rect;
+        ADisplay* disp = window->layout.displays;
+        SkinRect drect = disp->rect;
+        void* winhandle = skin_winsys_get_window_handle();
 
-        memset(&wminfo, 0, sizeof(wminfo));
-        SDL_GetWMInfo(&wminfo);
-#ifdef _WIN32
-        winhandle = (void*)wminfo.window;
-#elif defined(CONFIG_DARWIN)
-        winhandle = (void*)wminfo.nsWindowPtr;
-#else
-        winhandle = (void*)wminfo.info.x11.window;
-#endif
         skin_scaler_get_scaled_rect(window->scaler, &drect, &drect);
 
-        android_showOpenglesWindow(winhandle, drect.pos.x, drect.pos.y,
-                                   drect.size.w, drect.size.h, disp->rotation * -90.);
+        window->win_funcs->opengles_show(winhandle,
+                                         drect.pos.x,
+                                         drect.pos.y,
+                                         drect.size.w,
+                                         drect.size.h,
+                                         disp->rotation * -90.);
     }
 }
 
 static void
 skin_window_redraw_opengles( SkinWindow* window )
 {
-    android_redrawOpenglesWindow();
+    window->win_funcs->opengles_redraw();
+    //android_redrawOpenglesWindow();
 }
 
 static int  skin_window_reset_internal (SkinWindow*, SkinLayout*);
 
 SkinWindow*
-skin_window_create( SkinLayout*  slayout, int  x, int  y, double  scale, int  no_display )
+skin_window_create(SkinLayout* slayout,
+                   int x,
+                   int y,
+                   double scale,
+                   int no_display,
+                   const SkinWindowFuncs* win_funcs)
 {
     SkinWindow*  window;
 
@@ -1203,7 +1222,7 @@ skin_window_create( SkinLayout*  slayout, int  x, int  y, double  scale, int  no
      * a new scale to ensure it is.
      */
     if (scale <= 0) {
-        SDL_Rect  monitor;
+        SkinRect  monitor;
         int       screen_w, screen_h;
         int       win_w = slayout->size.w;
         int       win_h = slayout->size.h;
@@ -1211,9 +1230,9 @@ skin_window_create( SkinLayout*  slayout, int  x, int  y, double  scale, int  no
 
         /* To account for things like menu bars, window decorations etc..
          * We only compute 95% of the real screen size. */
-        SDL_WM_GetMonitorRect(&monitor);
-        screen_w = monitor.w * 0.95;
-        screen_h = monitor.h * 0.95;
+        skin_winsys_get_monitor_rect(&monitor);
+        screen_w = monitor.size.w * 0.95;
+        screen_h = monitor.size.h * 0.95;
 
         scale_w = 1.0;
         scale_h = 1.0;
@@ -1230,6 +1249,7 @@ skin_window_create( SkinLayout*  slayout, int  x, int  y, double  scale, int  no
 
     ANEW0(window);
 
+    window->win_funcs    = win_funcs;
     window->shrink_scale = scale;
     window->shrink       = (scale != 1.0);
     window->scaler       = skin_scaler_create();
@@ -1248,29 +1268,30 @@ skin_window_create( SkinLayout*  slayout, int  x, int  y, double  scale, int  no
         skin_window_free(window);
         return NULL;
     }
-    SDL_WM_SetPos( x, y );
+    skin_winsys_set_window_pos(x, y);
 
     /* Check that the window is fully visible */
-    if ( !window->no_display && !SDL_WM_IsFullyVisible(0) ) {
-        SDL_Rect  monitor;
-        int       win_x, win_y, win_w, win_h;
-        int       new_x, new_y;
+    if (!window->no_display && !skin_winsys_is_window_fully_visible()) {
+        SkinRect monitor;
+        int win_x, win_y, win_w, win_h;
+        int new_x, new_y;
 
-        SDL_WM_GetMonitorRect(&monitor);
-        SDL_WM_GetPos(&win_x, &win_y);
-        win_w = window->surface->w;
-        win_h = window->surface->h;
+        skin_winsys_get_monitor_rect(&monitor);
+
+        skin_winsys_get_window_pos(&win_x, &win_y);
+        win_w = skin_surface_width(window->surface);
+        win_h = skin_surface_height(window->surface);
 
         /* First, we recenter the window */
-        new_x = (monitor.w - win_w)/2;
-        new_y = (monitor.h - win_h)/2;
+        new_x = (monitor.size.w - win_w)/2;
+        new_y = (monitor.size.h - win_h)/2;
 
         /* If it is still too large, we ensure the top-border is visible */
         if (new_y < 0)
             new_y = 0;
 
         /* Done */
-        SDL_WM_SetPos(new_x, new_y);
+        skin_winsys_set_window_pos(new_x, new_y);
         dprint( "emulator window was out of view and was recentered\n" );
     }
 
@@ -1306,8 +1327,9 @@ skin_window_enable_qwerty( SkinWindow*  window, int  enabled )
 void
 skin_window_set_title( SkinWindow*  window, const char*  title )
 {
-    if (window && title)
-        SDL_WM_SetCaption( title, title );
+    if (window && title) {
+        skin_winsys_set_window_title(title);
+    }
 }
 
 static void
@@ -1317,20 +1339,8 @@ skin_window_resize( SkinWindow*  window )
         skin_window_hide_opengles(window);
 
     /* now resize window */
-    if (window->surface) {
-        SDL_FreeSurface(window->surface);
-        window->surface = NULL;
-    }
-
-    if (window->shrink_surface) {
-        SDL_FreeSurface(window->shrink_surface);
-        window->shrink_surface = NULL;
-    }
-
-    if (window->shrink_pixels) {
-        AFREE(window->shrink_pixels);
-        window->shrink_pixels = NULL;
-    }
+    skin_surface_unrefp(&window->surface);
+    skin_surface_unrefp(&window->shrink_surface);
 
     if ( !window->no_display ) {
         int           layout_w = window->layout.rect.size.w;
@@ -1339,28 +1349,24 @@ skin_window_resize( SkinWindow*  window )
         int           window_h = layout_h;
         int           window_x = window->x_pos;
         int           window_y = window->y_pos;
-        int           flags;
-        SDL_Surface*  surface;
+        SkinSurface*  surface;
         double        scale = 1.0;
         int           fullscreen = window->fullscreen;
 
         if (fullscreen) {
-            SDL_Rect  r;
-            if (SDL_WM_GetMonitorRect(&r) < 0) {
-                fullscreen = 0;
-            } else {
-                double  x_scale, y_scale;
+            SkinRect r;
+            skin_winsys_get_monitor_rect(&r);
+            double  x_scale, y_scale;
 
-                window_x = r.x;
-                window_y = r.y;
-                window_w = r.w;
-                window_h = r.h;
+            window_x = r.pos.x;
+            window_y = r.pos.y;
+            window_w = r.size.w;
+            window_h = r.size.h;
 
-                x_scale = window_w * 1.0 / layout_w;
-                y_scale = window_h * 1.0 / layout_h;
+            x_scale = window_w * 1.0 / layout_w;
+            y_scale = window_h * 1.0 / layout_h;
 
-                scale = (x_scale <= y_scale) ? x_scale : y_scale;
-            }
+            scale = (x_scale <= y_scale) ? x_scale : y_scale;
         }
         else if (window->shrink) {
             scale = window->shrink_scale;
@@ -1368,25 +1374,11 @@ skin_window_resize( SkinWindow*  window )
             window_h = (int) ceil(layout_h*scale);
         }
 
-        {
-            char temp[32];
-            sprintf(temp, "%d,%d", window_x, window_y);
-            setenv("SDL_VIDEO_WINDOW_POS", temp, 1);
-            setenv("SDL_VIDEO_WINDOW_FORCE_VISIBLE", "1", 1);
-        }
-
-        flags = SDL_SWSURFACE;
-        if (fullscreen) {
-            flags |= SDL_FULLSCREEN;
-        }
-        surface = SDL_SetVideoMode( window_w, window_h, 32, flags );
-        if (surface == NULL) {
-            fprintf(stderr, "### Error: could not create or resize SDL window: %s\n", SDL_GetError() );
-            exit(1);
-        }
-
-        SDL_WM_SetPos( window_x, window_y );
-
+        surface = skin_surface_create_window(window_x,
+                                             window_y,
+                                             window_w,
+                                             window_h,
+                                             fullscreen);
         window->effective_scale = scale;
         window->effective_x     = 0;
         window->effective_y     = 0;
@@ -1407,14 +1399,9 @@ skin_window_resize( SkinWindow*  window )
             window_h = (int) ceil(window_h / scale );
 
             window->shrink_surface = surface;
-            AARRAY_NEW0(window->shrink_pixels, window_w * window_h * 4);
-            if (window->shrink_pixels == NULL) {
-                fprintf(stderr, "### Error: could not allocate memory for rescaling surface\n");
-                exit(1);
-            }
-            window->surface = sdl_surface_from_argb32( window->shrink_pixels, window_w, window_h );
+            window->surface = skin_surface_create_slow(window_w, window_h);
             if (window->surface == NULL) {
-                fprintf(stderr, "### Error: could not create or resize SDL window: %s\n", SDL_GetError() );
+                fprintf(stderr, "### Error: could not create or resize window\n");
                 exit(1);
             }
             skin_scaler_set( window->scaler, scale, window->effective_x, window->effective_y );
@@ -1437,11 +1424,21 @@ skin_window_reset_internal ( SkinWindow*  window, SkinLayout*  slayout )
     window->layout = layout;
 
     disp = window->layout.displays;
-    if (disp != NULL && window->onion)
-        display_set_onion( disp,
-                           window->onion,
-                           window->onion_rotation,
-                           window->onion_alpha );
+    if (disp != NULL) {
+        if (slayout->onion_image) {
+            // Onion was specified in layout file.
+            display_set_onion( disp,
+                               slayout->onion_image,
+                               slayout->onion_rotation,
+                               slayout->onion_alpha );
+        } else if (window->onion) {
+            // Onion was specified via command line.
+            display_set_onion( disp,
+                               window->onion,
+                               window->onion_rotation,
+                               window->onion_alpha );
+        }
+    }
 
     skin_window_resize(window);
 
@@ -1452,12 +1449,10 @@ skin_window_reset_internal ( SkinWindow*  window, SkinLayout*  slayout )
     skin_window_redraw( window, NULL );
 
     if (slayout->event_type != 0) {
-        user_event_generic( slayout->event_type, slayout->event_code, slayout->event_value );
-        /* XXX: hack, replace by better code here */
-        if (slayout->event_value != 0)
-            corecmd_set_coarse_orientation( ANDROID_COARSE_PORTRAIT );
-        else
-            corecmd_set_coarse_orientation( ANDROID_COARSE_LANDSCAPE );
+        window->win_funcs->generic_event(
+                slayout->event_type,
+                slayout->event_code,
+                slayout->event_value);
     }
 
     return 0;
@@ -1467,7 +1462,7 @@ int
 skin_window_reset ( SkinWindow*  window, SkinLayout*  slayout )
 {
     if (!window->fullscreen) {
-        SDL_WM_GetPos(&window->x_pos, &window->y_pos);
+        skin_winsys_get_window_pos(&window->x_pos, &window->y_pos);
     }
     if (skin_window_reset_internal( window, slayout ) < 0)
         return -1;
@@ -1490,18 +1485,9 @@ void
 skin_window_free  ( SkinWindow*  window )
 {
     if (window) {
-        if (window->surface) {
-            SDL_FreeSurface(window->surface);
-            window->surface = NULL;
-        }
-        if (window->shrink_surface) {
-            SDL_FreeSurface(window->shrink_surface);
-            window->shrink_surface = NULL;
-        }
-        if (window->shrink_pixels) {
-            AFREE(window->shrink_pixels);
-            window->shrink_pixels = NULL;
-        }
+        skin_surface_unrefp(&window->surface);
+        skin_surface_unrefp(&window->shrink_surface);
+
         if (window->onion) {
             skin_image_unref( &window->onion );
             window->onion_rotation = SKIN_ROTATION_0;
@@ -1539,8 +1525,13 @@ skin_window_set_onion( SkinWindow*   window,
 static void
 skin_window_update_shrink( SkinWindow*  window, SkinRect*  rect )
 {
-    skin_scaler_scale( window->scaler, window->shrink_surface, window->surface,
-                       rect->pos.x, rect->pos.y, rect->size.w, rect->size.h );
+    skin_scaler_scale(window->scaler,
+                      window->shrink_surface,
+                      window->surface,
+                      rect->pos.x,
+                      rect->pos.y,
+                      rect->size.w,
+                      rect->size.h);
 }
 
 void
@@ -1551,19 +1542,6 @@ skin_window_set_scale( SkinWindow*  window, double  scale )
 
     skin_window_resize( window );
     skin_window_redraw( window, NULL );
-}
-
-static uint32_t
-sdl_surface_map_argb( SDL_Surface* s, uint32_t  c )
-{
-    if (s != NULL) {
-        return SDL_MapRGBA( s->format,
-            ((c) >> 16) & 255,
-            ((c) >> 8) & 255,
-            ((c) & 255),
-            ((c) >> 24) & 255 );
-    }
-    return 0x00000000;
 }
 
 void
@@ -1579,14 +1557,9 @@ skin_window_redraw( SkinWindow*  window, SkinRect*  rect )
             SkinRect  r;
 
             if ( skin_rect_intersect( &r, rect, &layout->rect ) ) {
-                SDL_Rect  rd;
-                rd.x = r.pos.x;
-                rd.y = r.pos.y;
-                rd.w = r.size.w;
-                rd.h = r.size.h;
-
-                SDL_FillRect( window->surface, &rd,
-                              sdl_surface_map_argb( window->surface, layout->color ));
+                skin_surface_fill(window->surface,
+                                  &r,
+                                  layout->color);
             }
         }
 
@@ -1618,13 +1591,7 @@ skin_window_redraw( SkinWindow*  window, SkinRect*  rect )
             skin_window_update_shrink( window, rect );
         else
         {
-            SDL_Rect  rd;
-            rd.x = rect->pos.x;
-            rd.y = rect->pos.y;
-            rd.w = rect->size.w;
-            rd.h = rect->size.h;
-
-            SDL_UpdateRects( window->surface, 1, &rd );
+            skin_surface_update(window->surface, rect);
         }
         skin_window_redraw_opengles( window );
     }
@@ -1634,9 +1601,9 @@ void
 skin_window_toggle_fullscreen( SkinWindow*  window )
 {
     if (window && window->surface) {
-        if (!window->fullscreen)
-            SDL_WM_GetPos( &window->x_pos, &window->y_pos );
-
+        if (!window->fullscreen) {
+            skin_winsys_get_window_pos(&window->x_pos, &window->y_pos);
+        }
         window->fullscreen = !window->fullscreen;
         skin_window_resize( window );
         skin_window_redraw( window, NULL );
@@ -1670,7 +1637,7 @@ skin_window_map_to_scale( SkinWindow*  window, int  *x, int  *y )
 }
 
 void
-skin_window_process_event( SkinWindow*  window, SDL_Event*  ev )
+skin_window_process_event(SkinWindow*  window, SkinEvent* ev)
 {
     Button*  button;
     int      mx, my;
@@ -1679,25 +1646,28 @@ skin_window_process_event( SkinWindow*  window, SDL_Event*  ev )
         return;
 
     switch (ev->type) {
-    case SDL_MOUSEBUTTONDOWN:
+    case kEventMouseButtonDown:
         if ( window->ball.tracking ) {
             skin_window_trackball_press( window, 1 );
             break;
         }
 
-        mx = ev->button.x;
-        my = ev->button.y;
+        mx = ev->u.mouse.x;
+        my = ev->u.mouse.y;
         skin_window_map_to_scale( window, &mx, &my );
         skin_window_move_mouse( window, mx, my );
         skin_window_find_finger( window, mx, my );
 #if 0
         printf("down: x=%d y=%d fx=%d fy=%d fis=%d\n",
-               ev->button.x, ev->button.y, window->finger.pos.x,
+               ev->u.mouse.x, ev->u.mouse.y, window->finger.pos.x,
                window->finger.pos.y, window->finger.inside);
 #endif
         if (window->finger.inside) {
             window->finger.tracking = 1;
-            add_finger_event(window->finger.pos.x, window->finger.pos.y, 1);
+            add_finger_event(window,
+                             window->finger.pos.x,
+                             window->finger.pos.y,
+                             1);
         } else {
             window->button.pressed = NULL;
             button = window->button.hover;
@@ -1706,27 +1676,27 @@ skin_window_process_event( SkinWindow*  window, SDL_Event*  ev )
                 skin_window_redraw( window, &button->rect );
                 window->button.pressed = button;
                 if(button->keycode) {
-                    user_event_key(button->keycode, 1);
+                    window->win_funcs->key_event(button->keycode, 1);
                 }
             }
         }
         break;
 
-    case SDL_MOUSEBUTTONUP:
+    case kEventMouseButtonUp:
         if ( window->ball.tracking ) {
             skin_window_trackball_press( window, 0 );
             break;
         }
         button = window->button.pressed;
-        mx = ev->button.x;
-        my = ev->button.y;
+        mx = ev->u.mouse.x;
+        my = ev->u.mouse.y;
         skin_window_map_to_scale( window, &mx, &my );
         if (button)
         {
             button->down = 0;
             skin_window_redraw( window, &button->rect );
             if(button->keycode) {
-                user_event_key(button->keycode, 0);
+                window->win_funcs->key_event(button->keycode, 0);
             }
             window->button.pressed = NULL;
             window->button.hover   = NULL;
@@ -1736,31 +1706,43 @@ skin_window_process_event( SkinWindow*  window, SDL_Event*  ev )
         {
             skin_window_move_mouse( window, mx, my );
             window->finger.tracking = 0;
-            add_finger_event( window->finger.pos.x, window->finger.pos.y, 0);
+            add_finger_event(window,
+                             window->finger.pos.x,
+                             window->finger.pos.y,
+                             0);
         }
         break;
 
-    case SDL_MOUSEMOTION:
+    case kEventMouseMotion:
         if ( window->ball.tracking ) {
-            skin_window_trackball_move( window, ev->motion.xrel, ev->motion.yrel );
+            skin_window_trackball_move(window,
+                                       ev->u.mouse.xrel,
+                                       ev->u.mouse.yrel);
             break;
         }
-        mx = ev->button.x;
-        my = ev->button.y;
+        mx = ev->u.mouse.x;
+        my = ev->u.mouse.y;
         skin_window_map_to_scale( window, &mx, &my );
         if ( !window->button.pressed )
         {
             skin_window_move_mouse( window, mx, my );
             if ( window->finger.tracking ) {
-                add_finger_event( window->finger.pos.x, window->finger.pos.y, 1 );
+                add_finger_event(window,
+                                 window->finger.pos.x,
+                                 window->finger.pos.y,
+                                 1);
             }
         }
         break;
 
-    case SDL_VIDEOEXPOSE:
+    case kEventVideoExpose:
         skin_window_redraw_opengles(window);
         break;
+
+    default:
+        ;
     }
+
 }
 
 static ADisplay*

@@ -15,6 +15,10 @@
 
 #include <stdarg.h>
 
+#include "android/utils/compiler.h"
+
+ANDROID_BEGIN_HEADER
+
 /** FORMATTED BUFFER PRINTING
  **
  **  bufprint() allows your to easily and safely append formatted string
@@ -68,9 +72,12 @@ extern char*   bufprint (char*  buffer, char*  buffend, const char*  fmt, ... );
  **/
 
 extern char*  bufprint_app_dir    (char*  buffer, char*  buffend);
+extern char*  bufprint_avd_home_path(char*  buffer, char*  buffend);
 extern char*  bufprint_config_path(char*  buffer, char*  buffend);
 extern char*  bufprint_config_file(char*  buffer, char*  buffend, const char*  suffix);
 extern char*  bufprint_temp_dir   (char*  buffer, char*  buffend);
 extern char*  bufprint_temp_file  (char*  buffer, char*  buffend, const char*  suffix);
+
+ANDROID_END_HEADER
 
 #endif /* _ANDROID_UTILS_BUFPRINT_H */

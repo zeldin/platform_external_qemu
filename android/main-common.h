@@ -13,12 +13,19 @@
 #define ANDROID_MAIN_COMMON_H
 
 #include <stdint.h>
+#include "android/avd/hw-config.h"
 #include "android/cmdline-option.h"
 #include "android/skin/keyset.h"
-#include "android/config.h"
-#include "android/avd/hw-config.h"
+#include "android/utils/aconfig-file.h"
+#include "android/utils/compiler.h"
+
+ANDROID_BEGIN_HEADER
 
 /* Common routines used by both android/main.c and android/main-ui.c */
+
+// Reset the value of |*string| to a copy of |new_value|. This
+// will free() the previous value of |*string| first.
+void reassign_string(char** string, const char* new_value);
 
 /** Emulator user configuration (e.g. last window position)
  **/
@@ -93,14 +100,6 @@ void findImagePaths( AndroidHwConfig*  hwConfig,
 void updateHwConfigFromAVD(AndroidHwConfig* hwConfig, struct AvdInfo* avd,
                            AndroidOptions* opts, int inAndroidBuild);
 
-/* Called from android/main.c to handle options specific to the standalone
- * UI program. This is a no-op otherwise.
- */
-void handle_ui_options( AndroidOptions* opts );
-
-/* Called from android/main.c to potentially attach to a core from the
- * standalone UI program. This is a no-op otherwise.
- */
-int attach_ui_to_core( AndroidOptions* opts );
+ANDROID_END_HEADER
 
 #endif /* ANDROID_MAIN_COMMON_H */

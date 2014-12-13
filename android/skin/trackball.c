@@ -12,8 +12,29 @@
 #include "android/skin/trackball.h"
 #include "android/skin/image.h"
 #include "android/utils/system.h"
-#include "user-events.h"
+
 #include <math.h>
+#include <stdlib.h>
+#include <sys/time.h>
+
+// Return the number of milliseconds since the start of this module.
+static uint32_t get_ticks(void) {
+    static int tick_init;
+    static uint32_t tick_offset;
+
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+
+    uint32_t now =
+            (uint32_t)(tv.tv_sec * 1000U) + (uint32_t)(tv.tv_usec / 1000U);
+
+    if (!tick_init) {
+        tick_offset = now;
+        tick_init = 1;
+    }
+
+    return now - tick_offset;
+}
 
 /***********************************************************************/
 /***********************************************************************/
@@ -161,7 +182,7 @@ typedef struct SkinTrackBall
 {
     int             diameter;
     unsigned*       pixels;
-    SDL_Surface*    surface;
+    SkinSurface*    surface;
     VectorRec       axes[3];  /* current ball axes */
 
 #define  DOT_GRID        3                        /* number of horizontal and vertical cells per side grid */
@@ -181,7 +202,7 @@ typedef struct SkinTrackBall
     unsigned         dot_color;
     unsigned         ring_color;
 
-    Uint32           ticks_last;  /* ticks since last move */
+    uint32_t         ticks_last;  /* ticks since last move */
     int              acc_x;
     int              acc_y;
     int              acc_threshold;
@@ -189,6 +210,8 @@ typedef struct SkinTrackBall
 
     /* rotation applied to events send to the system */
     SkinRotation     rotation;
+
+    SkinTrackBallEventFunc event_func;
 
 } TrackBallRec, *TrackBall;
 
@@ -207,16 +230,18 @@ typedef struct SkinTrackBall
 #define  ACC_SCALE      0.2
 
 static void
-trackball_init( TrackBall  ball, int  diameter, int  ring,
-                unsigned   ball_color, unsigned  dot_color,
-                unsigned   ring_color )
-{
+trackball_init(TrackBall  ball, int  diameter, int  ring,
+               unsigned   ball_color, unsigned  dot_color,
+               unsigned   ring_color,
+               SkinTrackBallEventFunc event_func) {
     int  diameter2 = diameter + ring*2;
 
     memset( ball, 0, sizeof(*ball) );
 
     ball->acc_threshold = ACC_THRESHOLD;
     ball->acc_scale     = ACC_SCALE;
+
+    ball->event_func = event_func;
 
     /* init SDL surface */
     ball->diameter   = diameter2;
@@ -227,7 +252,11 @@ trackball_init( TrackBall  ball, int  diameter, int  ring,
     ball->rotation   = SKIN_ROTATION_0;
 
     ball->pixels   = (unsigned*)calloc( diameter2*diameter2, sizeof(unsigned) );
-    ball->surface  = sdl_surface_from_argb32( ball->pixels, diameter2, diameter2 );
+    ball->surface  = skin_surface_create_argb32_from(diameter2,
+                                                     diameter2,
+                                                     diameter2 * 4,
+                                                     ball->pixels,
+                                                     0);
 
     /* init axes */
     ball->axes[0][0] = 1.; ball->axes[0][1] = 0.; ball->axes[0][2] = 0.;
@@ -383,10 +412,7 @@ trackball_done( TrackBall  ball )
     ball->sphere_map   = NULL;
     ball->sphere_count = 0;
 
-    if (ball->surface) {
-        SDL_FreeSurface( ball->surface );
-        ball->surface = NULL;
-    }
+    skin_surface_unrefp(&ball->surface);
 
     if (ball->pixels) {
         free( ball->pixels );
@@ -413,7 +439,7 @@ static int
 trackball_move( TrackBall  ball,  int  dx, int  dy )
 {
     RotatorRec  rot[1];
-    Uint32      now = SDL_GetTicks();
+    uint32_t    now = get_ticks();
 
     ball->acc_x += dx;
     ball->acc_y += dy;
@@ -449,7 +475,7 @@ trackball_move( TrackBall  ball,  int  dx, int  dy )
             break;
         }
 
-        user_event_mouse(ddx, ddy, 1, 0);
+        ball->event_func(ddx, ddy);
     }
 
     rotator_reset( rot, dx, dy );
@@ -478,7 +504,8 @@ trackball_refresh( TrackBall  ball )
     Fix16           dot_threshold = DOT_THRESHOLD * diameter;
     int             nn;
 
-    SDL_LockSurface( ball->surface );
+    SkinSurfacePixels pix;
+    skin_surface_lock(ball->surface, &pix);
 
     fixedvector_from_vector( (Fix16Vector)&faxes[0], (Vector)&ball->axes[0] );
     fixedvector_from_vector( (Fix16Vector)&faxes[1], (Vector)&ball->axes[1] );
@@ -543,26 +570,33 @@ trackball_refresh( TrackBall  ball )
 
         pixels[coord->x + diameter*coord->y] = color;
     }
-    SDL_UnlockSurface( ball->surface );
+    skin_surface_unlock(ball->surface);
 }
 
 void
-trackball_draw( TrackBall  ball, int  x, int  y, SDL_Surface*  dst )
+trackball_draw(TrackBall ball, int x, int y, SkinSurface* dst)
 {
-    SDL_Rect  d;
+    SkinPos dst_pos;
+    dst_pos.x = x;
+    dst_pos.y = y;
 
-    d.x = x;
-    d.y = y;
-    d.w = ball->diameter;
-    d.h = ball->diameter;
+    SkinRect src_rect;
+    src_rect.pos.x = 0;
+    src_rect.pos.y = 0;
+    src_rect.size.w = ball->diameter;
+    src_rect.size.h = ball->diameter;
 
-    SDL_BlitSurface( ball->surface, NULL, dst, &d );
-    SDL_UpdateRects( dst, 1, &d );
+    skin_surface_blit(dst,
+                      &dst_pos,
+                      ball->surface,
+                      &src_rect,
+                      SKIN_BLIT_COPY);
+    //skin_surface_update(dst, &rd);
 }
 
 
 SkinTrackBall*
-skin_trackball_create  ( SkinTrackBallParameters*  params )
+skin_trackball_create  ( const SkinTrackBallParameters*  params )
 {
     TrackBall  ball;
 
@@ -572,7 +606,9 @@ skin_trackball_create  ( SkinTrackBallParameters*  params )
                     params->ring,
                     params->ball_color,
                     params->dot_color,
-                    params->ring_color );
+                    params->ring_color,
+                    params->event_func
+                  );
     return  ball;
 }
 
@@ -595,7 +631,7 @@ skin_trackball_refresh ( SkinTrackBall*  ball )
 }
 
 void
-skin_trackball_draw( SkinTrackBall*  ball, int  x, int  y, SDL_Surface*  dst )
+skin_trackball_draw(SkinTrackBall* ball, int x, int y, SkinSurface* dst)
 {
     trackball_draw(ball, x, y, dst);
 }
@@ -610,12 +646,12 @@ skin_trackball_destroy ( SkinTrackBall*  ball )
 }
 
 void
-skin_trackball_rect( SkinTrackBall*  ball, SDL_Rect*  rect )
+skin_trackball_rect(SkinTrackBall* ball, SkinRect*  rect)
 {
-    rect->x = 0;
-    rect->y = 0;
-    rect->w = ball->diameter;
-    rect->h = ball->diameter;
+    rect->pos.x = 0;
+    rect->pos.y = 0;
+    rect->size.w = ball->diameter;
+    rect->size.h = ball->diameter;
 }
 
 

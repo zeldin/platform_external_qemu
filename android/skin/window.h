@@ -12,11 +12,25 @@
 #ifndef _SKIN_WINDOW_H
 #define _SKIN_WINDOW_H
 
+#include "android/skin/event.h"
 #include "android/skin/file.h"
 #include "android/skin/trackball.h"
-#include <SDL.h>
 
 typedef struct SkinWindow  SkinWindow;
+
+typedef struct SkinWindowFuncs {
+    void (*key_event)(unsigned keycode, int down);
+    void (*mouse_event)(unsigned x, unsigned y, unsigned state);
+    void (*generic_event)(int event_type, int event_code, int event_value);
+    int (*opengles_show)(void* winhandle,
+                         int x,
+                         int y,
+                         int width,
+                         int height,
+                         float rotation_degrees);
+    int (*opengles_hide)(void);
+    void (*opengles_redraw)(void);
+} SkinWindowFuncs;
 
 /* Note: if scale is <= 0, we interpret this as 'auto-detect'.
  *       The behaviour is to use 1.0 by default, unless the resulting
@@ -27,7 +41,8 @@ extern SkinWindow*      skin_window_create( SkinLayout*  layout,
                                             int          x,
                                             int          y,
                                             double       scale,
-                                            int          no_display );
+                                            int          no_display,
+                                            const SkinWindowFuncs* win_funcs);
 
 extern void             skin_window_enable_touch( SkinWindow*  window, int  enabled );
 extern void             skin_window_enable_trackball( SkinWindow*  window, int  enabled );
@@ -37,7 +52,7 @@ extern void             skin_window_enable_qwerty( SkinWindow*  window, int  ena
 extern int              skin_window_reset ( SkinWindow*  window, SkinLayout*  layout );
 extern void             skin_window_free  ( SkinWindow*  window );
 extern void             skin_window_redraw( SkinWindow*  window, SkinRect*  rect );
-extern void             skin_window_process_event( SkinWindow*  window, SDL_Event*  ev );
+extern void             skin_window_process_event( SkinWindow*  window, SkinEvent*  ev );
 
 extern void             skin_window_set_onion( SkinWindow*   window,
                                                SkinImage*    onion,

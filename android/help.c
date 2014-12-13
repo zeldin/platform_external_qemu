@@ -4,13 +4,14 @@
 #include "android/utils/bufprint.h"
 #include "android/utils/debug.h"
 #include "android/utils/misc.h"
+#ifndef NO_SKIN
+#include "android/skin/keycode.h"
 #include "android/skin/keyset.h"
+#endif
 #include "android/android.h"
 #include <stdint.h>
-#include "audio/audio.h"
 #include <string.h>
 #include <stdlib.h>
-#include "android/protocol/core-commands-api.h"
 
 /* XXX: TODO: put most of the help stuff in auto-generated files */
 
@@ -208,13 +209,16 @@ help_disk_images( stralloc_t*  out )
 static void
 help_keys(stralloc_t*  out)
 {
+#ifndef NO_SKIN
     int  pass, maxw = 0;
 
     stralloc_add_str( out, "  When running the emulator, use the following keypresses:\n\n");
 
-    if (!android_keyset)
-        android_keyset = skin_keyset_new_from_text( skin_keyset_get_default() );
-
+    SkinKeyset* keyset = skin_keyset_get_default();
+    if (!keyset) {
+        keyset = skin_keyset_new_from_text(
+                skin_keyset_get_default_text());
+    }
     for (pass = 0; pass < 2; pass++) {
         SkinKeyCommand  cmd;
 
@@ -224,13 +228,13 @@ help_keys(stralloc_t*  out)
             int             n, count, len;
             char            temp[32], *p = temp, *end = p + sizeof(temp);
 
-            count = skin_keyset_get_bindings( android_keyset, cmd, bindings );
+            count = skin_keyset_get_bindings( keyset, cmd, bindings );
             if (count <= 0)
                 continue;
 
             for (n = 0; n < count; n++) {
                 p = bufprint(p, end, "%s%s", (n == 0) ? "" : ", ",
-                            skin_key_symmod_to_str( bindings[n].sym, bindings[n].mod ) );
+                             skin_key_pair_to_string( bindings[n].sym, bindings[n].mod ) );
             }
 
             if (pass == 0) {
@@ -244,6 +248,7 @@ help_keys(stralloc_t*  out)
     }
     PRINTF( "\n" );
     PRINTF( "  note that NumLock must be deactivated for keypad keys to work\n\n" );
+#endif  // !NO_SKIN
 }
 
 
@@ -267,9 +272,8 @@ help_environment(stralloc_t*  out)
 
     "  If ANDROID_LOG_TAGS is defined, it will be used as in '-logcat <tags>'.\n\n"
 
-    "  If ANDROID_SDK_HOME is defined, it indicates the path of the '.android'\n"
-    "  directory which contains the SDK user data (Android Virtual Devices,\n"
-    "  DDMS preferences, key stores, etc.).\n\n"
+    "  If ANDROID_EMULATOR_HOME is defined, it replaces the path of the '$HOME/.android'\n"
+    "  directory which contains the emulator config data (DDMS preferences, key stores, etc.).\n\n"
 
     "  If ANDROID_SDK_ROOT is defined, it indicates the path of the SDK\n"
     "  installation directory.\n\n"
@@ -281,6 +285,7 @@ help_environment(stralloc_t*  out)
 static void
 help_keyset_file(stralloc_t*  out)
 {
+#ifndef NO_SKIN
     int           n, count;
     const char**  strings;
     char          temp[MAX_PATH];
@@ -326,10 +331,10 @@ help_keyset_file(stralloc_t*  out)
     "\n"
     "  finally <key> is a QWERTY-specific keyboard symbol which can be one of:\n\n"
     );
-    count   = skin_keysym_str_count();
+    count   = skin_key_code_count();
     strings = calloc( count, sizeof(char*) );
     for (n = 0; n < count; n++)
-        strings[n] = skin_keysym_str(n);
+        strings[n] = skin_key_code_str(n);
 
     stralloc_tabular( out, strings, count, "    ", 80-8 );
     free(strings);
@@ -346,6 +351,7 @@ help_keyset_file(stralloc_t*  out)
     "    CHANGE_LAYOUT_PREV  Keypad_7,Ctrl-J   # switch to a previous skin layout\n"
     "\n"
     );
+#endif  // !NO_SKIN
 }
 
 
@@ -734,6 +740,39 @@ help_snapshot_list(stralloc_t*  out)
 }
 
 static void
+help_accel(stralloc_t *out)
+{
+    PRINTF(
+        "  Use '-accel <mode>' to control how CPU emulation can be accelerated\n"
+        "  when launching the Android emulator. Accelerated emulation only works\n"
+        "  for x86 and x86_64 system images. On Linux, it relies on KVM being\n"
+        "  installed. On Windows and OS X, it relies on an Intel CPU and the\n"
+        "  Intel HAXM driver being installed on your development machine.\n"
+        "  Valid values for <mode> are:\n\n"
+
+        "     auto   The default, determines automatically if acceleration\n"
+        "            is supported, and uses it when possible.\n\n"
+
+        "     off    Disables acceleration entirely. Mostly useful for debugging.\n\n"
+
+        "     on     Force acceleration. If KVM/HAXM is not installed or usable,\n"
+        "            the emulator will refuse to start and print an error message.\n\n"
+
+        "  Note that this flag is ignored if you're not emulating an x86 or x86_64\n"
+    );
+}
+
+static void
+help_no_accel(stralloc_t* out)
+{
+    PRINTF(
+        "  Use '-no-accel' as a shortcut to '-accel off', i.e. to disable accelerated\n"
+        "  CPU emulation, when emulating an x86 or x86_64 system image. Only useful\n"
+        "  for debugging.\n"
+    );
+}
+
+static void
 help_skindir(stralloc_t*  out)
 {
     PRINTF(
@@ -776,8 +815,6 @@ static void
 help_shaper(stralloc_t*  out)
 {
     int  n;
-    NetworkSpeed* android_netspeed;
-    NetworkLatency* android_netdelay;
     PRINTF(
     "  the Android emulator supports network throttling, i.e. slower network\n"
     "  bandwidth as well as higher connection latencies. this is done either through\n"
@@ -785,24 +822,30 @@ help_shaper(stralloc_t*  out)
 
     "  the format of -netspeed is one of the following (numbers are kbits/s):\n\n" );
 
-    for (n = 0; !corecmd_get_netspeed(n, &android_netspeed); n++) {
+    for (n = 0;; ++n) {
+        const NetworkSpeed* android_netspeed = &android_netspeeds[n];
+        if (!android_netspeed->name) {
+            break;
+        }
         PRINTF( "    -netspeed %-12s %-15s  (up: %.1f, down: %.1f)\n",
                         android_netspeed->name,
                         android_netspeed->display,
                         android_netspeed->upload/1000.,
                         android_netspeed->download/1000. );
-        free(android_netspeed);
     }
     PRINTF( "\n" );
     PRINTF( "    -netspeed %-12s %s", "<num>", "select both upload and download speed\n");
     PRINTF( "    -netspeed %-12s %s", "<up>:<down>", "select individual up and down speed\n");
 
     PRINTF( "\n  The format of -netdelay is one of the following (numbers are msec):\n\n" );
-    for (n = 0; !corecmd_get_netdelay(n, &android_netdelay); n++) {
+    for (n = 0; ; ++n) {
+        const NetworkLatency* android_netdelay = &android_netdelays[n];
+        if (!android_netdelay->name) {
+            break;
+        }
         PRINTF( "    -netdelay %-10s   %-15s  (min %d, max %d)\n",
                         android_netdelay->name, android_netdelay->display,
                         android_netdelay->min_ms, android_netdelay->max_ms );
-        free(android_netdelay);
     }
     PRINTF( "    -netdelay %-10s   %s", "<num>", "select exact latency\n");
     PRINTF( "    -netdelay %-10s   %s", "<min>:<max>", "select min and max latencies\n\n");
@@ -920,89 +963,18 @@ help_scale(stralloc_t*  out)
 }
 
 static void
-help_trace(stralloc_t*  out)
+help_code_profile(stralloc_t*  out)
 {
     PRINTF(
-    "  use '-trace <name>' to start the emulator with runtime code profiling support\n"
-    "  profiling itself will not be enabled unless you press F9 to activate it, or\n"
-    "  the executed code turns it on programmatically.\n\n"
-
-    "  trace information is stored in directory <name>, several files are created\n"
-    "  there, that can later be used with the 'traceview' program that comes with\n"
-    "  the Android SDK for analysis.\n\n"
-
-    "  note that execution will be slightly slower when enabling code profiling,\n"
-    "  this is a necessary requirement of the operations being performed to record\n"
-    "  the execution trace. this slowdown should not affect your system until you\n"
-    "  enable the profiling though...\n\n"
+    "  use '-code_profile <name>' to start the emulator with runtime code profiling support.\n\n"
+    "  Profiles are stored in directory <name>, each executable will have its own profile.\n"
+    "  The profile can be further processed to generate an AutoFDO profile, which can be \n"
+    "  used to drive feedback directed optimizations.\n"
+    "  More details can be found from https://gcc.gnu.org/wiki/AutoFDO.\n\n"
+    "  IMPORTANT: This feature is *experimental* and requires a patched kernel.\n"
+    "  as such, it will not work on regular SDK system images.\n\n"
     );
 }
-
-#ifdef CONFIG_MEMCHECK
-static void
-help_memcheck(stralloc_t*  out)
-{
-    PRINTF(
-    "  use '-memcheck <flags>' to start the emulator with memory access checking\n"
-    "  support.\n\n"
-
-    "  <flags> enables, or disables memory access checking, and also controls\n"
-    "  what events are going to be logged by the memory access checker.\n"
-    "  <flags> can be one of the following:\n"
-    "  1 - Enables memory access checking with default logging (\"LIRW\"), or\n"
-    "  0 - Disables memory access checking, or\n"
-    "  A combination (in no particular order) of the following:\n"
-    "     L - Logs memory leaks on process exit.\n"
-    "     I - Logs attempts to use invalid pointers in free, or realloc routines.\n"
-    "     R - Logs memory access violation on read operations.\n"
-    "     W - Logs memory access violation on write operations.\n"
-    "     N - Logs new process ID allocation.\n"
-    "     F - Logs guest's process forking.\n"
-    "     S - Logs guest's process starting.\n"
-    "     E - Logs guest's process exiting.\n"
-    "     C - Logs guest's thread creation (clone).\n"
-    "     B - Logs libc.so initialization in the guest system.\n"
-    "     M - Logs module mapping and unmapping in the guest system.\n"
-    "     A - Logs all emulator events. Equala to \"LIRWFSECANBM\" combination.\n"
-    "     e - Logs error messages, received from the guest system.\n"
-    "     d - Logs debug messages, received from the guest system.\n"
-    "     i - Logs information messages, received from the guest system.\n"
-    "     a - Logs all messages, received from the guest system.\n"
-    "         This is equal to \"edi\" combination.\n\n"
-
-    "  note that execution might be significantly slower when enabling memory access\n"
-    "  checking, this is a necessary requirement of the operations being performed\n"
-    "  to analyze memory allocations and memory access.\n\n"
-    );
-}
-#endif  // CONFIG_MEMCHECK
-
-#ifdef CONFIG_STANDALONE_UI
-static void
-help_list_cores(stralloc_t*  out)
-{
-    PRINTF(
-    "  use '-list-cores localhost to list emulator core processes running on this machine.\n"
-    "  use '-list-cores host_name, or IP address to list emulator core processes running on\n"
-    "  a remote machine.\n"
-    );
-}
-
-static void
-help_attach_core(stralloc_t*  out)
-{
-    PRINTF(
-    "  the -attach-core <console socket> options attaches the UI to a running emulator core process.\n\n"
-
-    "  the <console socket> parameter must be in the form [host:]port, where 'host' addresses the\n"
-    "  machine on which the core process is running, and 'port' addresses the console port number for\n"
-    "  the running core process. Note that 'host' value must be in the form that can be resolved\n"
-    "  into an IP address.\n\n"
-
-    "  Use -list-cores to enumerate console ports for all currently running core processes.\n"
-    );
-}
-#endif  // CONFIG_STANDALONE_UI
 
 static void
 help_show_kernel(stralloc_t*  out)
@@ -1522,6 +1494,18 @@ help_screen(stralloc_t* out)
     "     no-touch    -> disable touch and multi-touch screen emulation\n\n"
 
     "  Default mode for screen emulation is 'touch'.\n\n"
+    );
+}
+
+static void
+help_selinux(stralloc_t* out)
+{
+    PRINTF(
+    "  Use -selinux to control the SELinux enforcement mode.\n"
+    "  By default, SELinux is in enforcing mode. Other modes available are:\n"
+    "     -selinux permissive   -> Load the SELinux policy, but do not enforce it.\n"
+    "                              Policy violations are logged, but not rejected.\n"
+    "     -selinux disabled     -> Disable kernel support for SELinux.\n"
     );
 }
 
