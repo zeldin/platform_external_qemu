@@ -259,6 +259,9 @@ $(call gen-hx-header,qemu-options.hx,qemu-options.def,os-posix.c os-win32.c)
 $(call end-emulator-library)
 
 $(call start-emulator64-library, emulator64-target-$(EMULATOR_TARGET_CPU))
+ifeq ($(HOST_ARCH),ppc)
+LOCAL_CFLAGS += -I$(LOCAL_PATH)/tcg/ppc64
+endif
 LOCAL_CFLAGS += $(common_LOCAL_CFLAGS)
 LOCAL_SRC_FILES += $(common_LOCAL_SRC_FILES)
 $(call gen-hw-config-defs)
