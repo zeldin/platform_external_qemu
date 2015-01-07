@@ -48,6 +48,10 @@ int android_getHostBitness(void) {
         struct utsname u;
         int host_runs_64bit_OS = (uname(&u) == 0 && strcmp(u.machine, "x86_64") == 0);
   */
+#ifdef __powerpc__
+    return system("uname -m | grep -q \"ppc64\"") == 0 ? 64 : 32;
+#else
     return system("file -L \"$SHELL\" | grep -q \"x86[_-]64\"") == 0 ? 64 : 32;
+#endif
 #endif // !_WIN32
 }
