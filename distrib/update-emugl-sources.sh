@@ -99,7 +99,7 @@ AOSP_DIR=$(cd "$AOSP_DIR" && pwd -P)
 
 # Find the sources for the encoder:
 ENCODER_TOP_DIR=$AOSP_DIR/device/generic/goldfish/opengl/system
-DECODER_TOP_DIR=$AOSP_DIR/sdk/emulator/opengl/host/libs
+DECODER_TOP_DIR=$PROGDIR/../distrib/android-emugl/host/libs
 
 if [ ! -d "$ENCODER_TOP_DIR" ]; then
     fatal "Missing encoder source directory: $ENCODER_TOP_DIR"
@@ -115,8 +115,8 @@ GLESv1_INPUT_DIR=$DECODER_TOP_DIR/GLESv1_dec
 GLESv2_INPUT_DIR=$DECODER_TOP_DIR/GLESv2_dec
 RENDERCONTROL_INPUT_DIR=$DECODER_TOP_DIR/renderControl_dec
 
-$EMUGEN -i $DECODER_TOP_DIR/GLESv1_dec -E $ENCODER_TOP_DIR/GLESv1_enc gl
-$EMUGEN -i $DECODER_TOP_DIR/GLESv2_dec -E $ENCODER_TOP_DIR/GLESv2_enc gl2
+$EMUGEN -i $DECODER_TOP_DIR/GLESv1_dec -E $ENCODER_TOP_DIR/GLESv1_enc gles1
+$EMUGEN -i $DECODER_TOP_DIR/GLESv2_dec -E $ENCODER_TOP_DIR/GLESv2_enc gles2
 $EMUGEN -i $DECODER_TOP_DIR/renderControl_dec -E $ENCODER_TOP_DIR/renderControl_enc renderControl
 
 echo "Done, see $ENCODER_TOP_DIR"

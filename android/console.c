@@ -51,6 +51,7 @@
 #include <fcntl.h>
 #include "android/hw-events.h"
 #include "android/user-events.h"
+#include "android/hw-fingerprint.h"
 #include "android/hw-sensors.h"
 #include "android/skin/charmap.h"
 #include "android/skin/keycode-buffer.h"
@@ -1507,6 +1508,7 @@ static const CommandDefRec  cdma_commands[] =
     { "prl_version", "Dump the current PRL version",
       NULL, NULL,
       do_cdma_prl_version, NULL },
+    { NULL, NULL, NULL, NULL, NULL, NULL }
 };
 
 static const CommandDefRec  gsm_commands[] =
@@ -1591,7 +1593,7 @@ do_sms_send( ControlClient  client, char*  args )
     }
 
 
-    /* un-secape message text into proper utf-8 (conversion happens in-site) */
+    /* un-escape message text into proper utf-8 (conversion happens in-site) */
     p      += 1;
     textlen = strlen(p);
     textlen = sms_utf8_from_message_str( p, textlen, (unsigned char*)p, textlen );
@@ -1988,7 +1990,7 @@ do_event_text( ControlClient  client, char*  args )
         return -1;
     }
 
-    skin_keycodes_buffer_init(&keycodes, &user_event_keycodes);
+    skin_keycode_buffer_init(&keycodes, &user_event_keycodes);
 
     /* un-secape message text into proper utf-8 (conversion happens in-site) */
     textlen = strlen((char*)p);
@@ -2012,7 +2014,7 @@ do_event_text( ControlClient  client, char*  args )
 
         skin_charmap_reverse_map_unicode( NULL, (unsigned)c, 1, &keycodes );
         skin_charmap_reverse_map_unicode( NULL, (unsigned)c, 0, &keycodes );
-        skin_keycodes_buffer_flush( &keycodes );
+        skin_keycode_buffer_flush( &keycodes );
     }
 
     return 0;
@@ -2262,8 +2264,6 @@ do_geo_fix( ControlClient  client, char*  args )
     double  params[ NUM_GEO_PARAMS ];
     int     n_satellites = 1;
 
-    static  int last_time = 0;
-
     if (!p)
         p = "";
 
@@ -2309,6 +2309,7 @@ do_geo_fix( ControlClient  client, char*  args )
         double   val;
         int      deg, min;
         char     hemi;
+        int      hh = 0, mm = 0, ss = 0;
 
         /* format overview:
          *    time of fix      123519     12:35:19 UTC
@@ -2327,9 +2328,17 @@ do_geo_fix( ControlClient  client, char*  args )
          *    dgps sid         <dontcare> DGPS station id
          */
 
-        /* first, the time */
-        stralloc_add_format( s, "$GPGGA,%06d", last_time );
-        last_time ++;
+        // Get the current time as hh:mm:ss
+        struct timeval tm;
+
+        if (0 == gettimeofday(&tm, NULL)) {
+            // tm.tv_sec is elapsed seconds since epoch (UTC, which is what we want)
+            hh = (int) (tm.tv_sec / (60 * 60)) % 24;
+            mm = (int) (tm.tv_sec /  60      ) % 60;
+            ss = (int) (tm.tv_sec            ) % 60;
+        }
+
+        stralloc_add_format( s, "$GPGGA,%02d%02d%02d", hh, mm, ss);
 
         /* then the latitude */
         hemi = 'N';
@@ -2378,9 +2387,9 @@ do_geo_fix( ControlClient  client, char*  args )
 
 static const CommandDefRec  geo_commands[] =
 {
-    { "nmea", "send an GPS NMEA sentence",
-    "'geo nema <sentence>' sends a NMEA 0183 sentence to the emulated device, as\r\n"
-    "if it came from an emulated GPS modem. <sentence> must begin with '$GP'. only\r\n"
+    { "nmea", "send a GPS NMEA sentence",
+    "'geo nema <sentence>' sends an NMEA 0183 sentence to the emulated device, as\r\n"
+    "if it came from an emulated GPS modem. <sentence> must begin with '$GP'. Only\r\n"
     "'$GPGGA' and '$GPRCM' sentences are supported at the moment.\r\n",
     NULL, do_geo_nmea, NULL },
 
@@ -2590,6 +2599,49 @@ static const CommandDefRec sensor_commands[] =
       "'set <sensorname> <value-a>[:<value-b>[:<value-c>]]' set the values of a given sensor.\r\n",
       NULL, do_sensors_set, NULL },
 
+    { NULL, NULL, NULL, NULL, NULL, NULL }
+};
+
+/********************************************************************************************/
+/********************************************************************************************/
+/*****                                                                                 ******/
+/*****                        F I N G E R P R I N T  C O M M A N D S                   ******/
+/*****                                                                                 ******/
+/********************************************************************************************/
+/********************************************************************************************/
+
+static int
+do_fingerprint_touch(ControlClient client, char* args )
+{
+    if (args) {
+        char *endptr;
+        int fingerid = strtol(args, &endptr, 0);
+        if (endptr != args) {
+            android_hw_fingerprint_touch(fingerid);
+            return 0;
+        }
+        control_write(client, "KO: invalid fingerid\r\n");
+        return -1;
+    }
+    control_write(client, "KO: missing fingerid\r\n");
+    return -1;
+}
+
+static int
+do_fingerprint_remove(ControlClient client, char* args )
+{
+    android_hw_fingerprint_remove();
+    return 0;
+}
+
+static const CommandDefRec fingerprint_commands[] =
+{
+    { "touch", "touch finger print sensor with <fingerid>",
+      "'touch <fingerid>' touch finger print sensor with <fingerid>.\r\n",
+      NULL, do_fingerprint_touch, NULL },
+    { "remove", "remove finger from the fingerprint sensor",
+      "'remove' remove finger from the fingerprint sensor.\r\n",
+      NULL, do_fingerprint_remove, NULL },
     { NULL, NULL, NULL, NULL, NULL, NULL }
 };
 
@@ -2955,6 +3007,10 @@ static const CommandDefRec   main_commands[] =
     { "sensor", "manage emulator sensors",
       "allows you to request the emulator sensors\r\n", NULL,
       NULL, sensor_commands },
+
+    { "finger", "manage emulator finger print",
+      "allows you to touch the emulator finger print sensor\r\n", NULL,
+      NULL, fingerprint_commands},
 
     { NULL, NULL, NULL, NULL, NULL, NULL }
 };

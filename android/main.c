@@ -35,6 +35,7 @@
 
 #include "math.h"
 
+#include "android/avd/scanner.h"
 #include "android/config/config.h"
 #include "android/cpu_accelerator.h"
 
@@ -63,6 +64,7 @@
 #include "android/snapshot.h"
 
 #include "android/framebuffer.h"
+#include "android/opengl/emugl_config.h"
 #include "android/iolooper.h"
 
 SkinRotation  android_framebuffer_rotation;
@@ -259,6 +261,19 @@ int main(int argc, char **argv, char **envp)
         exit(0);
     }
 
+    if (opts->list_avds) {
+        AvdScanner* scanner = avdScanner_new(NULL);
+        for (;;) {
+            const char* name = avdScanner_next(scanner);
+            if (!name) {
+                break;
+            }
+            printf("%s\n", name);
+        }
+        avdScanner_free(scanner);
+        exit(0);
+    }
+
     if (opts->snapshot_list) {
         if (opts->snapstorage == NULL) {
             /* Need to find the default snapstorage */
@@ -411,6 +426,8 @@ int main(int argc, char **argv, char **envp)
         reassign_string(&android_hw->hw_cpu_arch, "x86");
 #elif defined(TARGET_MIPS)
         reassign_string(&android_hw->hw_cpu_arch, "mips");
+#elif defined(TARGET_MIPS64)
+        reassign_string(&android_hw->hw_cpu_arch, "mips64");
 #endif
     }
 
@@ -424,6 +441,14 @@ int main(int argc, char **argv, char **envp)
             kernelFile = avdInfo_getKernelPath(avd);
             if (kernelFile == NULL) {
                 derror( "This AVD's configuration is missing a kernel file!!" );
+                const char* sdkRootDir = getenv("ANDROID_SDK_ROOT");
+                if (sdkRootDir) {
+                    derror( "ANDROID_SDK_ROOT is defined (%s) but cannot find kernel file in "
+                            "%s" PATH_SEP "system-images" PATH_SEP
+                            " sub directories", sdkRootDir, sdkRootDir);
+                } else {
+                    derror( "ANDROID_SDK_ROOT is undefined");
+                }
                 exit(2);
             }
             D("autoconfig: -kernel %s", kernelFile);
@@ -1062,8 +1087,8 @@ int main(int argc, char **argv, char **envp)
         /* Don't worry about having a leading space here, this is handled
          * by the core later. */
 
-#ifdef TARGET_I386
         p = bufprint(p, end, " androidboot.hardware=goldfish");
+#ifdef TARGET_I386
         p = bufprint(p, end, " clocksource=pit");
 #endif
 
@@ -1158,19 +1183,20 @@ int main(int argc, char **argv, char **envp)
         reassign_string(&hw->hw_keyboard_charmap, charmap_name);
     }
 
-    if (opts->gpu) {
-        const char* gpu = opts->gpu;
-        if (!strcmp(gpu,"on") || !strcmp(gpu,"enable")) {
-            hw->hw_gpu_enabled = 1;
-        } else if (!strcmp(gpu,"off") || !strcmp(gpu,"disable")) {
-            hw->hw_gpu_enabled = 0;
-        } else if (!strcmp(gpu,"auto")) {
-            /* Nothing to do */
-        } else {
-            derror("Invalid value for -gpu <mode> parameter: %s\n", gpu);
-            derror("Valid values are: on, off or auto\n");
+    {
+        EmuglConfig config;
+
+        if (!emuglConfig_init(&config,
+                              hw->hw_gpu_enabled,
+                              hw->hw_gpu_mode,
+                              opts->gpu,
+                              0)) {
+            derror("%s", config.status);
             exit(1);
         }
+        hw->hw_gpu_enabled = config.enabled;
+        reassign_string(&hw->hw_gpu_mode, config.backend);
+        D("%s", config.status);
     }
 
     /* Quit emulator on condition that both, gpu and snapstorage are on. This is

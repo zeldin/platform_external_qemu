@@ -195,7 +195,8 @@ skin_keyboard_process_event(SkinKeyboard*  kb, SkinEvent* ev, int  down)
                 if (len < 0) {
                     break;
                 }
-                skin_keyboard_process_unicode_event(kb, codepoint, down);
+                skin_keyboard_process_unicode_event(kb, codepoint, 1);
+                skin_keyboard_process_unicode_event(kb, codepoint, 0);
                 text += len;
             }
             skin_keyboard_flush(kb);
@@ -236,7 +237,7 @@ skin_keyboard_process_event(SkinKeyboard*  kb, SkinEvent* ev, int  down)
             return;
         }
 
-        if (code == KEY_BACKSPACE) {
+        if (code == KEY_BACKSPACE || code == KEY_ENTER) {
             skin_keyboard_do_key_event(kb, code, down);
             skin_keyboard_flush(kb);
             return;
@@ -283,14 +284,14 @@ skin_keyboard_add_key_event( SkinKeyboard*  kb,
                              unsigned       code,
                              unsigned       down )
 {
-    skin_keycodes_buffer_add(kb->keycodes, code, down);
+    skin_keycode_buffer_add(kb->keycodes, code, down);
 }
 
 
 void
 skin_keyboard_flush( SkinKeyboard*  kb )
 {
-    skin_keycodes_buffer_flush(kb->keycodes);
+    skin_keycode_buffer_flush(kb->keycodes);
 }
 
 
@@ -328,7 +329,7 @@ skin_keyboard_create_from_charmap_name(const char* charmap_name,
         kb->kset = skin_keyset_new_from_text(
                 skin_keyset_get_default_text());
     }
-    skin_keycodes_buffer_init(kb->keycodes, keycode_flush);
+    skin_keycode_buffer_init(kb->keycodes, keycode_flush);
     return kb;
 }
 

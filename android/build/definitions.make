@@ -68,10 +68,12 @@ local-host-define = $(if $(strip $(LOCAL_$1)),,$(eval LOCAL_$1 := $$(call local-
 # module. LOCAL_MODULE must be defined before calling this.
 local-intermediates-dir = $(OBJS_DIR)/intermediates/$(LOCAL_MODULE)
 
-local-library-path = $(OBJS_DIR)/libs/$(1).a
-local-executable-path = $(OBJS_DIR)/$(1)$(call local-host-tool,EXEEXT)
-local-shared-library-path = $(OBJS_DIR)/lib/$(1)$(call local-host-tool,DLLEXT)
+# Return $1, except if LOCAL_MODULE_BITS is 64, where $2 is returned.
+local-bits-choice = $(strip $(if $(filter 64,$(LOCAL_MODULE_BITS)),$2,$1))
 
+local-library-path = $(OBJS_DIR)/$(call local-bits-choice,libs,libs64)/$(1).a
+local-executable-path = $(OBJS_DIR)/$(1)$(call local-host-tool,EXEEXT)
+local-shared-library-path = $(OBJS_DIR)/$(call local-bits-choice,lib,lib64)/$(1)$(call local-host-tool,DLLEXT)
 
 # Toolchain control support.
 # It's possible to switch between the regular toolchain and the host one
@@ -215,3 +217,30 @@ define transform-generated-source
 @mkdir -p $(dir $@)
 $(hide) $(PRIVATE_CUSTOM_TOOL)
 endef
+
+# Generate DLL symbol file
+#
+# NOTE: The file is always named foo.def
+#
+define generate-symbol-file
+SRC:=$(1)
+OBJ:=$$(LOCAL_OBJS_DIR)/$$(notdir $$(SRC:%.entries=%.def))
+LOCAL_GENERATED_SYMBOL_FILE:=$$(OBJ)
+$$(OBJ): PRIVATE_SRC := $$(SRC)
+$$(OBJ): PRIVATE_DST := $$(OBJ)
+$$(OBJ): PRIVATE_MODE := $$(GEN_ENTRIES_MODE_$(HOST_OS))
+$$(OBJ): $$(SRC)
+	@mkdir -p $$(dir $$(PRIVATE_DST))
+	@echo "Generate symbol file: $$(notdir $$(PRIVATE_DST))"
+	$(hide) android/scripts/gen-entries.py --mode=$$(PRIVATE_MODE) --output=$$(PRIVATE_DST) $$(PRIVATE_SRC)
+endef
+
+GEN_ENTRIES_MODE_darwin := _symbols
+GEN_ENTRIES_MODE_windows := def
+GEN_ENTRIES_MODE_linux := sym
+
+EXPORTED_SYMBOL_LIST_windows :=
+EXPORTED_SYMBOL_LIST_darwin := -Wl,-exported_symbols_list,
+EXPORTED_SYMBOL_LIST_linux := -Wl,--version-script=
+
+symbol-file-linker-flags = $(EXPORTED_SYMBOL_LIST_$(HOST_OS))$1

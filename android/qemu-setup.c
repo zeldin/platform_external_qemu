@@ -19,6 +19,7 @@
 #include "android/android.h"
 #include "android/globals.h"
 #include "android/hw-sensors.h"
+#include "android/hw-fingerprint.h"
 #include "android/utils/debug.h"
 #include "android/utils/path.h"
 #include "android/utils/system.h"
@@ -363,7 +364,7 @@ void  android_emulation_setup( void )
     */
     int s = socket_loopback_client(adb_host_port, SOCKET_STREAM);
     if (s < 0) {
-        D("can't connect to ADB server: %s", errno_str );
+        D("can't connect to ADB server: %s (errno = %d)", errno_str, errno );
     } else {
         char tmp[32];
         char header[5];
@@ -467,6 +468,9 @@ void  android_emulation_setup( void )
 
     /* initialize sensors, this must be done here due to timer issues */
     android_hw_sensors_init();
+
+    /* initilize fingperprint here */
+    android_hw_fingerprint_init();
 
    /* cool, now try to run the "ddms ping" command, which will take care of pinging usage
     * if the user agreed for it. the emulator itself never sends anything to any outside

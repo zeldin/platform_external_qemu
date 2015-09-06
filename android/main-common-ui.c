@@ -552,10 +552,9 @@ FOUND_SKIN:
         int  depth  = aconfig_int(n, "bpp", hwConfig->hw_lcd_depth);
 
         if (width > 0 && height > 0) {
-            /* The emulated framebuffer wants sizes that are multiples of 4 */
-            if (((width|height) & 3) != 0) {
-                width  = (width+3) & ~3;
-                height = (height+3) & ~3;
+            /* The emulated framebuffer wants a width that is a multiple of 2 */
+            if ((width & 1) != 0) {
+                width  = (width + 1) & ~1;
                 D("adjusting LCD dimensions to (%dx%dx)", width, height);
             }
 
@@ -630,10 +629,13 @@ init_sdl_ui(AConfig*         skinConfig,
         signal(SIGTTOU, SIG_IGN);
 #endif
     } else {
+#ifndef _WIN32
+        // NOTE: On Windows, the program icon is embedded as a resource inside
+        //       the executable, and there is no need to actually set it
+        //       explictly, so do not call android_icon_find() on this
+        //       platform.
 #  if defined(__APPLE__)
         static const char kIconFile[] = "android_icon_256.png";
-#  elif defined(_WIN32)
-        static const char kIconFile[] = "android_icon_32.png";
 #  else
         static const char kIconFile[] = "android_icon_128.png";
 #  endif
@@ -648,6 +650,7 @@ init_sdl_ui(AConfig*         skinConfig,
                     "### Error: could not find emulator icon resource: %s\n",
                     kIconFile);
         }
+#endif  // !_WIN32
     }
     atexit(android_ui_at_exit);
 

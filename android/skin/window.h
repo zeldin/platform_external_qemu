@@ -30,6 +30,7 @@ typedef struct SkinWindowFuncs {
                          float rotation_degrees);
     int (*opengles_hide)(void);
     void (*opengles_redraw)(void);
+    void (*opengles_free)(void);
 } SkinWindowFuncs;
 
 /* Note: if scale is <= 0, we interpret this as 'auto-detect'.
@@ -81,5 +82,7 @@ typedef struct {
 
 extern void             skin_window_get_display( SkinWindow*  window, ADisplayInfo  *info );
 extern void             skin_window_update_display( SkinWindow*  window, int  x, int  y, int  w, int  h );
+
+extern void skin_window_update_gpu_frame(SkinWindow* window, int w, int h, const void* pixels);
 
 #endif /* _SKIN_WINDOW_H */

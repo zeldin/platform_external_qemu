@@ -76,6 +76,7 @@
 #include "android/utils/timezone.h"
 #include "android/snapshot.h"
 #include "android/opengles.h"
+#include "android/opengl/emugl_config.h"
 #include "android/multitouch-screen.h"
 #include "exec/hwaddr.h"
 #include "android/tcpdump.h"
@@ -2040,8 +2041,14 @@ void android_nand_add_image(const char* part_name,
         need_make_empty = true;
     }
 
-    pstrcat(tmp, sizeof tmp, ",file=");
-    pstrcat(tmp, sizeof tmp, part_file);
+
+    // Escape special characters in the file name
+    char *escaped_part_file = path_escape_path(part_file);
+    if (escaped_part_file) {
+        pstrcat(tmp, sizeof tmp, ",file=");
+        pstrcat(tmp, sizeof tmp, escaped_part_file);
+        free(escaped_part_file);
+    }
 
     // Do we need to make the partition image empty?
     // Do not do it if there is an initial file though since it will
@@ -2063,8 +2070,12 @@ void android_nand_add_image(const char* part_name,
     }
 
     if (part_init_file) {
-        pstrcat(tmp, sizeof tmp, ",initfile=");
-        pstrcat(tmp, sizeof tmp, part_init_file);
+        char *escaped_part_init = path_escape_path(part_init_file);
+        if (escaped_part_init) {
+            pstrcat(tmp, sizeof tmp, ",initfile=");
+            pstrcat(tmp, sizeof tmp, escaped_part_init);
+            free(escaped_part_init);
+        }
     }
 
     if (part_type == ANDROID_PARTITION_TYPE_EXT4) {
@@ -3037,7 +3048,7 @@ int main(int argc, char **argv, char **envp)
         /* A bit of sanity checking */
         if (width <= 0 || height <= 0    ||
             (depth != 16 && depth != 32) ||
-            (((width|height) & 3) != 0)  )
+            ((width & 1) != 0)  )
         {
             PANIC("Invalid display configuration (%d,%d,%d)",
                   width, height, depth);
@@ -3362,32 +3373,32 @@ int main(int argc, char **argv, char **envp)
      * If the parameter is undefined, this means the system image runs
      * inside an emulator that doesn't support GPU emulation at all.
      *
-     * We always start the GL ES renderer so we can gather stats on the
-     * underlying GL implementation. If GL ES acceleration is disabled,
-     * we just shut it down again once we have the strings. */
-    {
-        int qemu_gles = 0;
+     * The GL ES renderer cannot start properly if GPU emulation is disabled
+     * because this requires changing the LD_LIBRARY_PATH before launching
+     * the emulation engine. */
+    int qemu_gles = 0;
+    if (android_hw->hw_gpu_enabled) {
         if (android_initOpenglesEmulation() == 0 &&
-            android_startOpenglesRenderer(android_hw->hw_lcd_width, android_hw->hw_lcd_height) == 0)
+            android_startOpenglesRenderer(android_hw->hw_lcd_width,
+                                          android_hw->hw_lcd_height) == 0)
         {
             android_getOpenglesHardwareStrings(
                     android_gl_vendor, sizeof(android_gl_vendor),
                     android_gl_renderer, sizeof(android_gl_renderer),
                     android_gl_version, sizeof(android_gl_version));
-            if (android_hw->hw_gpu_enabled) {
-                qemu_gles = 1;
-            } else {
-                android_stopOpenglesRenderer();
-                qemu_gles = 0;
-            }
+            qemu_gles = 1;
         } else {
-            dwarning("Could not initialize OpenglES emulation, using software renderer.");
+            derror("Could not initialize OpenglES emulation, use '-gpu off' to disable it.");
+            exit(1);
         }
-        if (qemu_gles) {
-            stralloc_add_str(kernel_params, " qemu.gles=1");
-        } else {
-            stralloc_add_str(kernel_params, " qemu.gles=0");
-        }
+    }
+    if (qemu_gles) {
+        stralloc_add_str(kernel_params, " qemu.gles=1");
+        char  tmp[64];
+        snprintf(tmp, sizeof(tmp), "%d", 0x20000);
+        boot_property_add("ro.opengles.version", tmp);
+    } else {
+        stralloc_add_str(kernel_params, " qemu.gles=0");
     }
 
     /* We always force qemu=1 when running inside QEMU */
@@ -3688,8 +3699,11 @@ int main(int argc, char **argv, char **envp)
 
         hax_set_ramsize(ram_size);
         ret = hax_init(smp_cpus);
-        fprintf(stderr, "HAX is %s and emulator runs in %s mode\n",
-            !ret ? "working" :"not working", !ret ? "fast virt" : "emulation");
+        if (ret) {
+            fprintf(stderr, "HAXM is not working and emulator runs in emulation mode\n");
+        } else {
+            fprintf(stdout, "HAXM is working and emulator runs in fast virt mode\n");
+        }
     }
 #endif
 
