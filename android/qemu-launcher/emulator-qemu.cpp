@@ -70,6 +70,10 @@ namespace {
 const char kHostArch[] = "x86";
 #elif defined(__x86_64__)
 const char kHostArch[] = "x86_64";
+#elif defined(__powerpc64__)
+const char kHostArch[] = "ppc64";
+#elif defined(__powerpc__)
+const char kHostArch[] = "ppc";
 #else
 #error "Your host CPU is not supported!"
 #endif
