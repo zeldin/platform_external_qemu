@@ -510,7 +510,7 @@ PROBE_WINAUDIO=no
 case "$TARGET_OS" in
     darwin*) PROBE_COREAUDIO=yes;
     ;;
-    linux-*) PROBE_ALSA=yes; PROBE_OSS=yes; PROBE_ESD=yes; PROBE_PULSEAUDIO=yes;
+    linux-*) PROBE_ALSA=yes; PROBE_OSS=yes; PROBE_ESD=no; PROBE_PULSEAUDIO=yes;
     ;;
     freebsd-*) PROBE_OSS=yes;
     ;;
@@ -539,7 +539,7 @@ probe_system_library ()
     if [ `var_value $1` = yes ] ; then
         CFLAGS="$ORG_CFLAGS"
         LDFLAGS="$ORG_LDFLAGS -ldl"
-        cp -f android/config/check-esd.c $TMPC
+        cp -f $3 $TMPC
         compile
         if [ $? = 0 ] ; then
             log "AudioProbe : $2 seems to be usable on this system"

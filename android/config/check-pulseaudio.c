@@ -15,7 +15,7 @@
  */
 /* this file is used to test that we can use libesd with lazy dynamic linking */
 
-#include <esd.h>
+#include <pulse/simple.h>
 #include <dlfcn.h>
 #include <stdio.h>
 
@@ -24,11 +24,11 @@
 #define _STRINGIFY(x)  #x
 
 #define  PULSEAUDIO_SYMBOLS \
-    PULSEAUDIO_SYMBOLS(pa_simple*,pa_simple_new,(const char* server,const char* name, pa_stream_direction_t dir, const char* dev, const char* stream_name, const pa_sample_spec* ss, const pa_channel_map* map, const pa_buffer_attr *attr, int *error)) \
-    PULSEAUDIO_SYMBOLS(void,pa+simple_free,(pa_simple* s))\
-    PULSEAUDIO_SYMBOLS(int,pa_simple_write,(pa_simple* s, const void* data, size_t bytes, int* error))\
-    PULSEAUDIO_SYMBOLS(int,pa_simple_read,(pa_simple* s,void* data, size_t bytes, int* error))\
-    PULSEAUDIO_SYMBOLS(const char*,pa_strerror,(int error))
+    PULSEAUDIO_FUNCTION(pa_simple*,pa_simple_new,(const char* server,const char* name, pa_stream_direction_t dir, const char* dev, const char* stream_name, const pa_sample_spec* ss, const pa_channel_map* map, const pa_buffer_attr *attr, int *error)) \
+    PULSEAUDIO_FUNCTION(void,pa_simple_free,(pa_simple* s))\
+    PULSEAUDIO_FUNCTION(int,pa_simple_write,(pa_simple* s, const void* data, size_t bytes, int* error))\
+    PULSEAUDIO_FUNCTION(int,pa_simple_read,(pa_simple* s,void* data, size_t bytes, int* error))\
+    PULSEAUDIO_FUNCTION(const char*,pa_strerror,(int error))
 
 /* define pointers to library functions we're going to use */
 #define  PULSEAUDIO_FUNCTION(ret,name,sig)   \
